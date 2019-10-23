@@ -49,45 +49,45 @@ char* spanstr(span* s) {
     return v;
 }
 
-///returns zero for error
-int throw(frontend* fe, span s, const char* msg) {
-    if (s.start == NULL) {
+void msg(frontend* fe, span* s, const char* template_empty, const char* template, const char* msg) {
+    if (s->start == NULL) {
         set_col(stderr, RED);
-        fprintf(stderr, "Error in %s: ", fe->file);
+        fprintf(stderr, template_empty, fe->file);
 
         set_col(stderr, WHITE);
         fprintf(stderr, "%s\n\n", msg);
-
-        return 0;
     }
 
     //while the file is probably the same, we may have to reconstruct line and col if custom span
     unsigned long line=0;
     unsigned long col=0;
 
+    span line_span = *s;
     //count cols backwards
-    while (*s.start != '\n' && s.start > fe->s.start) {
+    while (*line_span.start != '\n' && line_span.start >= fe->s.start) {
         col++; //add column for every time we decrement to find previous linebreak
-        s.start--;
+        line_span.start--;
     }
 
+    line_span.start++;
+
     //...then count up for lines
-    for (char* pos=s.start; pos > fe->s.start; pos--) {
+    for (char* pos=line_span.start; pos > fe->s.start; pos--) {
         if (*pos == '\n') line++;
     }
 
     //resolve end of lines to show, upper bound exclusive
-    while (s.end <= fe->s.end && *s.end != '\n') {
-        s.end++;
+    while (line_span.end < fe->s.end && *line_span.end != '\n') {
+        line_span.end++;
     }
 
     //store spans of each line
     vector lines = vector_new(sizeof(span));
 
-    char* line_start = s.start;
-    char* pos = s.start;
-    while (pos++, pos <= s.end) {
-        if (pos == s.end || *pos == '\n') {
+    char* line_start = line_span.start;
+    char* pos = line_span.start;
+    while (pos++, pos <= line_span.end) {
+        if (pos == line_span.end || *pos == '\n') {
             //+1 to skip newline
             span x = {.start=line_start, .end=pos};
             vector_push(&lines, &x);
@@ -102,7 +102,7 @@ int throw(frontend* fe, span s, const char* msg) {
     int digits = (int)log10(line+lines.length)+1;
 
     set_col(stderr, RED);
-    fprintf(stderr, "Error at %s:%lu:%lu: ", fe->file, line, col);
+    fprintf(stderr, template, fe->file, line, col);
 
     set_col(stderr, WHITE);
     fprintf(stderr, "%s\n\n", msg);
@@ -125,28 +125,35 @@ int throw(frontend* fe, span s, const char* msg) {
 
         fprintf(stderr, "%s | %s\n", line_num, spanstr(x));
         //check if original span is contained within line, then highlight
-        if ((s.end > x->start)
-            && ((s.start >= x->start && s.end < x->end)
-                || (s.start > x->start && s.end <= x->end))) {
+        if ((s->end > x->start)
+            && (s->start >= x->start && s->end <= x->end)) {
             //highlight end - line start
-            char* buf = malloc((s.end - x->start) + 1);
-            buf[s.end-x->start] = 0;
+            char* buf = malloc((s->end - x->start) + 1);
+            buf[s->end-x->start] = 0;
 
             //fill before-highlight with whitespace
             unsigned long long ws;
-            for (ws=0; ws < s.start - x->start; ws++) {
+            for (ws=0; ws < s->start - x->start; ws++) {
                 buf[ws] = ' ';
             }
 
-            for (unsigned long long hi=ws; hi < ws + (s.end - s.start); hi++) {
+            for (unsigned long long hi=ws; hi < ws + (s->end - s->start); hi++) {
                 buf[hi] = '^';
             }
 
             fprintf(stderr, "%s | %s\n", line_num, buf);
         }
     }
+}
 
+///always returns zero for convenience
+int throw(frontend* fe, span* s, const char* x) {
+    msg(fe, s, "error in %s", "error at %s:%lu:%lu: ", x);
     return 0;
+}
+
+void note(frontend* fe, span* s, const char* x) {
+    msg(fe, s, "note: in %s", "note: at %s:%lu:%lu, ", x);
 }
 
 typedef struct {
@@ -164,7 +171,8 @@ typedef struct {
 
 typedef enum {
     t_lparen, t_rparen, t_lbrace, t_rbrace, t_lidx, t_ridx,
-    t_id, t_deref, t_ref, t_num, t_comma, t_sep, t_set,
+    t_id, t_mul, t_ref, t_num, t_comma, t_sep, t_set,
+    t_add, t_sub, t_div, t_mod,
     t_not, t_lt, t_gt, t_le, t_ge, t_eq
 } token_type;
 
@@ -180,46 +188,47 @@ typedef struct {
     char x;
 } lexer;
 
-int eof(lexer* l) {
+int lex_eof(lexer* l) {
     return l->pos.end > l->fe->s.end;
 }
 
-int next(lexer* l) {
+int lex_next(lexer* l) {
     l->x = *l->pos.end;
     l->pos.end++;
-    return eof(l);
+    return !lex_eof(l);
 }
 
-char back(lexer* l) {
+char lex_back(lexer* l) {
     l->pos.end--;
 }
 
-void mark(lexer* l) {
-    l->pos.start = l->pos.end;
+/// marks current char as start
+void lex_mark(lexer* l) {
+    l->pos.start = l->pos.end-1;
 }
 
 /// returns null when eof
-char peek(lexer* l, int i) {
+char lex_peek(lexer* l, int i) {
     if (l->pos.end+i-1 >= l->fe->s.end) return 0;
     return *(l->pos.end+i-1);
 }
 
 /// does not consume if unequal
-int next_eq(lexer* l, char x) {
-    if (peek(l, 1) == x) {
-        next(l); return 1;
+int lex_next_eq(lexer* l, char x) {
+    if (lex_peek(l, 1) == x) {
+        lex_next(l); return 1;
     } else {
         return 0;
     }
 }
 
 /// utility fn
-void push_token(lexer* l, token_type tt) {
+void token_push(lexer* l, token_type tt) {
     token t = {tt, .s=l->pos, .val=NULL};
     vector_push(&l->fe->tokens, &t);
 }
 
-void push_token_val(lexer* l, token_type tt, void* val, size_t size) {
+void token_push_val(lexer* l, token_type tt, void* val, size_t size) {
     void* heap_val = malloc(size);
     memcpy(heap_val, val, size);
 
@@ -233,40 +242,61 @@ void lex(frontend* fe) {
     l.pos.start = l.fe->s.start;
     l.pos.end = l.pos.start;
 
-    while (next(&l)) {
-        mark(&l);
+    while (lex_next(&l)) {
+        lex_mark(&l);
 
         switch (l.x) {
             case ' ': break; //skip whitespace
             case '\n': break; //skip newlines
+            case '\r': break; //skip cr(lf)
             case '/': { //consume comments
-                if (peek(&l, 1) == '/') {
-                    next(&l);
-                    while (next(&l) && l.x != '\n');
-                } else if (peek(&l, 1) == '*') {
-                    next(&l);
-                    while (next(&l) && (l.x != '*' || peek(&l, 1) != '/'));
+                if (lex_peek(&l, 1) == '/') {
+                    lex_next(&l);
+                    while (lex_next(&l) && l.x != '\n');
+                } else if (lex_peek(&l, 1) == '*') {
+                    lex_next(&l);
+                    while (lex_next(&l) && (l.x != '*' || lex_peek(&l, 1) != '/'));
+                } else {
+                    token_push(&l, t_div);
                 }
 
                 break;
             }
 
-            case '(': push_token(&l, t_lparen); break;
-            case ')': push_token(&l, t_rparen); break;
-            case '{': push_token(&l, t_lbrace); break;
-            case '}': push_token(&l, t_rbrace); break;
-            case '[': push_token(&l, t_lidx); break;
-            case ']': push_token(&l, t_ridx); break;
+            case '(':
+                token_push(&l, t_lparen); break;
+            case ')':
+                token_push(&l, t_rparen); break;
+            case '{':
+                token_push(&l, t_lbrace); break;
+            case '}':
+                token_push(&l, t_rbrace); break;
+            case '[':
+                token_push(&l, t_lidx); break;
+            case ']':
+                token_push(&l, t_ridx); break;
 
-            case '*': push_token(&l, t_deref); break;
-            case '&': push_token(&l, t_ref); break;
-            case ',': push_token(&l, t_comma); break;
-            case ';': push_token(&l, t_sep); break;
-            case '!': push_token(&l, t_not); break;
+            case '&':
+                token_push(&l, t_ref); break;
+            case ',':
+                token_push(&l, t_comma); break;
+            case ';':
+                token_push(&l, t_sep); break;
+            case '!':
+                token_push(&l, t_not); break;
 
-            case '>': if (next_eq(&l, '=')) push_token(&l, t_ge); else push_token(&l, t_gt); break;
-            case '<': if (next_eq(&l, '=')) push_token(&l, t_le); else push_token(&l, t_lt); break;
-            case '=': if (next_eq(&l, '=')) push_token(&l, t_eq); else push_token(&l, t_set); break;
+            case '+':
+                token_push(&l, t_add); break;
+            case '-':
+                token_push(&l, t_sub); break;
+            case '*':
+                token_push(&l, t_mul); break;
+            case '%':
+                token_push(&l, t_mod); break;
+
+            case '>': if (lex_next_eq(&l, '=')) token_push(&l, t_ge); else token_push(&l, t_gt); break;
+            case '<': if (lex_next_eq(&l, '=')) token_push(&l, t_le); else token_push(&l, t_lt); break;
+            case '=': if (lex_next_eq(&l, '=')) token_push(&l, t_eq); else token_push(&l, t_set); break;
 
             case '.':
             case '0' ... '9': {
@@ -275,21 +305,11 @@ void lex(frontend* fe) {
                 num.digits = vector_new(sizeof(char));
                 num.ty = integer;
 
-                uint64_t overflow_check = 0;
-
                 do {
                     if (l.x >= '0' && l.x <= '9') {
                         unsigned char x = l.x - '0';
 
-                        //not sure if this works
-                        if (overflow_check == UINT64_MAX && x > 0) {
-                            throw(fe, l.pos, "integer overflow");
-                        }
-
                         vector_push(&num.digits, &x);
-
-                        overflow_check *= 10; //shift left
-                        overflow_check += x;
                         //increment decimal place
                         num.decimal_place++;
                     } else if (l.x == '.') {
@@ -297,138 +317,72 @@ void lex(frontend* fe) {
                         num.decimal_place = 0;
                     } else if (l.x == 'u') {
                         if (num.ty == decimal) {
-                            throw(fe, l.pos, "decimal numbers cannot be marked unsigned");
+                            throw(fe, &l.pos, "decimal numbers cannot be marked unsigned");
                             break;
                         }
 
                         num.ty = unsigned_t;
                     } else {
-                        back(&l); //undo consuming non-number char
+                        lex_back(&l); //undo consuming non-number char
                         break;
                     }
-                } while(next(&l));
+                } while(lex_next(&l));
 
-                push_token_val(&l, t_num, &num, sizeof(num));
+                token_push_val(&l, t_num, &num, sizeof(num));
+                break;
             }
 
             case 'a' ... 'z':
             case 'A' ... 'Z': {
-                while ((l.x = peek(&l, 1)) &&
-                    ((l.x >= 'a' && l.x <= 'z') || (l.x >= '0' && l.x <= '9') || (l.x == '_')));
+                while ((l.x = lex_peek(&l, 1)) &&
+                       ((l.x >= 'a' && l.x <= 'z') || (l.x >= '0' && l.x <= '9') || (l.x == '_')) &&
+                       lex_next(&l));
 
-                push_token_val(&l, t_id, spanstr(&l.pos), spanlen(&l.pos)+1);
+                token_push_val(&l, t_id, spanstr(&l.pos), spanlen(&l.pos) + 1);
+
+                break;
             }
 
-            default: throw(l.fe, l.pos, "unrecognized token");
+            default: throw(l.fe, &l.pos, "unrecognized token");
         }
     }
 }
 
-/// increments pos, line, and col, and returns if the character next is last
-int next(frontend* fe) {
-    fe->x = *fe->pos.end;
+void free_token(token* t) {
+    switch (t->tt) {
+        case t_id: free(t->val);
+        case t_num: free(t->val);
 
-    fe->pos.end++;
-
-    if (*fe->pos.end == '\n') {
-        fe->line++; fe->col=0;
-    } else {
-        fe->col++;
+        default:;
     }
+}
 
-    if (fe->pos.end <= fe->s.end) return 1;
+typedef struct {
+    frontend* fe;
+    unsigned long pos;
+    token x;
+} parser;
+
+int parse_eof(parser* p) {
+    return p->pos > p->fe->len;
+}
+
+int parse_next(parser* p) {
+    token* x = vector_get(&p->fe->tokens, p->pos);;
+    if(x) p->x = *x;
+    p->pos++;
+    return !parse_eof(p);
+}
+
+token* parse_peek(parser* p, int i) {
+    if (p->pos+i-1 >= p->fe->len) return NULL;
+    else return vector_get(&p->fe->tokens, p->pos+i-1);
+}
+
+int parse_next_eq(parser* p, token_type tt) {
+    token* x = parse_peek(p, 1);
+    if (x && x->tt == tt) return parse_next(p);
     else return 0;
-}
-
-int take(frontend* fe, unsigned i) {
-    mark(&fe->pos);
-
-    while (i>0) {
-        if (!next(fe)) return 0;
-        i--;
-    }
-
-    return 1;
-}
-
-void backtrack_x(frontend* fe, char* to) {
-    while (fe->pos.end > to) {
-        fe->pos.end--;
-
-        if (*fe->pos.end == '\n') {
-            fe->col=0; fe->line--;
-        } else {
-            fe->col--;
-        }
-    }
-
-    fe->x = *(fe->pos.end-1);
-}
-
-void backtrack_start(frontend* fe) {
-    backtrack_x(fe, fe->pos.start);
-}
-
-/// moves cursor back, updates X, assumes i is valid
-void backtrack(frontend* fe, unsigned i) {
-    backtrack_x(fe, fe->pos.end-i);
-}
-
-/// is true if the current character is the last one
-int eof(frontend* fe) {
-    if (fe->pos.end < fe->s.end) return 0;
-    else return 1;
-}
-
-/// skip whitespace, newlines, comments
-int parse_skip(frontend* fe) {
-    mark(&fe->pos);
-
-    while (next(fe)) {
-        if (fe->x == '/') {
-            if (next(fe) && fe->x == '/') {
-                //skip until eof or newline
-                while (next(fe) && fe->x != '\n');
-            } else {
-                backtrack(fe, 1);
-
-                return 1;
-            }
-        } else if (fe->x != ' ' && fe->x != '\t' && fe->x != '\n') {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-/// not allowed in identifiers
-const char* RESERVED = " \t\n*&\"';{}[],/\\<>=+-()!.";
-
-/// marks start and consumes skip + id
-int parse_id(frontend* fe) {
-    //check first char is not numeric
-    {
-        parse_skip(fe);
-        if ((fe->x >= '0' && fe->x <= '9') || strchr(RESERVED, fe->x)) {
-            backtrack(fe, 1);
-            return 0;
-        } else {
-            //didnt fail, mark start of id
-            backtrack(fe, 1);
-            mark(&fe->pos);
-            next(fe);
-        }
-    }
-
-    while(next(fe)) {
-        if (strchr(RESERVED, fe->x)) {
-            backtrack(fe, 1);
-            return 1;
-        }
-    }
-
-    return 1;
 }
 
 typedef struct {
@@ -441,43 +395,43 @@ typedef struct {
 typedef struct {
     span s;
     //no ref, types are allowed to be defined out of order
-    span name;
+    char* name;
 
     char const_t;
     char ptr;
     char const_ptr;
 } type_id;
 
-int parse_type_id(frontend* fe, type_id* tid) {
-    if (!parse_id(fe)) return 0;
-    tid->s.start = fe->pos.start;
+int parse_type_id(parser* p, type_id* tid) {
+    if (!parse_next_eq(p, t_id)) return 0;
+    tid->s.start = p->x.s.start;
 
-    if (spaneq(fe->pos, "const")) {
+    if (strcmp(p->x.val, "const")==0) {
         tid->const_t = 1;
 
-        if (!parse_id(fe)) return throw(fe, NULL, "expected type after const");
+        if (!parse_next_eq(p, t_id)) return throw(p->fe, &p->x.s, "expected type after const");
     } else {
         tid->const_t = 0;
     }
 
-    tid->name = fe->pos;
+    tid->name = p->x.val;
 
-    parse_skip(fe);
-    if (fe->x == '*') {
+    if (parse_next_eq(p, t_mul)) {
         tid->ptr = 1;
 
-        if (parse_id(fe) && spaneq(fe->pos, "const")) {
+        token* const_ptr = parse_peek(p, 1);
+        if (const_ptr->tt==t_id && strcmp(const_ptr->val, "const")==0) {
             tid->const_ptr = 1;
+            //only consume if ==const
+            parse_next(p);
         } else {
             tid->const_ptr = 0;
-            backtrack_start(fe);
         }
     } else {
         tid->ptr = 0;
-        backtrack_start(fe);
     }
 
-    tid->s.start = fe->pos.end;
+    tid->s.end = p->x.s.end;
 
     return 1;
 }
@@ -501,11 +455,12 @@ typedef enum {
 } left;
 
 typedef struct {
-    span target;
+    span s;
+    char* target;
     vector args;
 } fn_call;
 
-/// linked list
+///// linked list
 typedef struct {
     op op;
 
@@ -515,10 +470,9 @@ typedef struct {
     void* right;
 } expr;
 
-void parse_set_left(expr* expr, left l, void* x, size_t size) {
+void parse_set_left(expr* expr, left l, void* x) {
     expr->left = l;
-    expr->left_ref = malloc(size);
-    memcpy(expr->left_ref, x, size);
+    expr->left_ref = x;
 }
 
 void parse_detach(expr* x_expr) {
@@ -527,11 +481,6 @@ void parse_detach(expr* x_expr) {
 
     x_expr->left = left_expr;
     x_expr->left_ref = detached;
-}
-
-void parse_set_right(expr* x_expr, expr* r_expr) {
-    x_expr->right = malloc(sizeof(expr));
-    memcpy(x_expr->right, r_expr, sizeof(expr));
 }
 
 void print_num(num* n) {
@@ -544,56 +493,91 @@ void print_num(num* n) {
     }
 }
 
-int parse_expr(frontend* fe, expr* x_expr, unsigned op_prec) {
-    num num;
-    if (parse_num(fe, &num)) {
+int parse_expr(parser* p, expr* x_expr, unsigned op_prec); //foward decl
+
+int parse_left_expr(parser* p, expr* x_expr) {
+    if (parse_next_eq(p, t_num)) {
         //copy to left
-        parse_set_left(x_expr, left_num, &num, sizeof(num));
-    } else if (parse_id(fe)) {
-        span target = fe->pos;
+        parse_set_left(x_expr, left_num, p->x.val);
+    } else if (parse_next_eq(p, t_id)) {
+        char* target = p->x.val; //record starting paren
+        span* target_span = &p->x.s;
 
-        parse_skip(fe);
-        if (fe->x == '(') {
-            fn_call call;
-            call.target = target;
-            call.args = vector_new(sizeof(x_expr));
+        if (parse_next_eq(p, t_lparen)) {
+            span* fn_paren = &p->x.s; //TODO: parenthesized procedures
 
-            while (parse_skip(fe), fe->x != ')') {
-                //no paren, go back
-                backtrack(fe, 1);
+            fn_call* f = malloc(sizeof(fn_call));
+            f->args = vector_new(sizeof(x_expr));
 
+            f->target = target;
+            f->s.start = target_span->start;
+
+            while (!parse_next_eq(p, t_rparen) && !parse_eof(p)) {
                 expr expr_arg;
-                if (!parse_expr(fe, &expr_arg, 0)) throw(fe, NULL, "expected expression");
+                if (!parse_expr(p, &expr_arg, 0))  return throw(p->fe, &p->x.s, "expected expression");
 
                 //consume comma, if exists
-                parse_skip(fe);
-                if (fe->x != ',') {
-                    backtrack(fe, 1);
-                }
+                parse_next_eq(p, t_comma);
             }
 
-            parse_set_left(x_expr, left_call, &call, sizeof(fn_call));
-        } else if (fe->x == '[') {
+            if (parse_eof(p)) {
+                free(f);
+                throw(p->fe, &p->x.s, "expected matching paren for function call");
+                note(p->fe, fn_paren, "other paren here");
+
+                return 0;
+            }
+
+            f->s.end = target_span->end;
+
+            parse_set_left(x_expr, left_call, f);
+        } else if (parse_next_eq(p, t_lidx)) {
+            span* l_idx = &p->x.s; //record starting bracket
             //set left to index expr
-            expr index_expr;
-            parse_set_left(&index_expr, left_access, &target, sizeof(span));
+            expr* index_expr = malloc(sizeof(expr));
+            parse_set_left(index_expr, left_access, target);
 
-            expr r_expr;
-            if (!parse_expr(fe, &r_expr, 0)) return throw(fe, NULL, "expected expression");
-            parse_set_right(&index_expr, &r_expr);
+            expr* r_expr = malloc(sizeof(expr));
 
-            if (!next(fe) || fe->x!=']') return throw(fe, NULL, "expected right bracket to end index");
+            if (!parse_expr(p, r_expr, 0)) {
+                //free right expression
+                free(r_expr); free(index_expr);
+                return throw(p->fe, &p->x.s, "expected expression");
+            }
 
-            parse_set_left(x_expr, left_expr, &index_expr, sizeof(expr));
+            index_expr->right=r_expr;
+
+            if (!parse_next_eq(p, t_ridx)) {
+                throw(p->fe, &p->x.s, "expected right bracket to end index");
+                note(p->fe, l_idx, "other bracket here");
+                return 0;
+            }
+
+            parse_set_left(x_expr, left_expr, index_expr);
         } else {
             //not call or index, simple access
-            parse_set_left(x_expr, left_access, &target, sizeof(span));
-
-            backtrack_start(fe); //neither ( or [, dont consume
+            parse_set_left(x_expr, left_access, target);
         }
     } else {
-        return 0;
+        return -1; //no expression at all
     }
+
+    return 1;
+};
+
+int parse_expr(parser* p, expr* x_expr, unsigned op_prec) {
+    int left=0; //error in the left side: return the right side instead
+    span* l_paren=NULL;
+
+    if (parse_next_eq(p, t_lparen)) {
+        //parentheses around expression, set base precedence to zero
+        l_paren = &p->x.s;
+        op_prec = 0;
+    }
+
+    //parse left side and set left status
+    left = parse_left_expr(p, x_expr);
+    if (left == -1) return 0; //no left expr, probably not an expression
 
     //parse ops
     x_expr->op = op_none;
@@ -601,46 +585,54 @@ int parse_expr(frontend* fe, expr* x_expr, unsigned op_prec) {
     while(1) {
         op x_op;
 
-        if (!parse_skip(fe)) return 1;
-
         unsigned x_op_prec;
 
-        switch (fe->x) {
-            case '+': {
+        token* x = parse_peek(p, 1);
+        if (!x) return 1; //no more tokens
+
+        switch (x->tt) {
+            case t_rparen: {
+                if (l_paren) {
+                    //consume paren
+                    parse_next(p);
+                    l_paren = NULL;
+                    //restart loop
+                    continue;
+                } else {
+                    return 1;
+                }
+            }
+
+            case t_add: {
                 x_op = op_add;
                 x_op_prec = 10;
-            }
                 break;
+            }
 
-            case '-': {
+            case t_sub: {
                 x_op = op_sub;
                 x_op_prec = 10;
-            }
                 break;
+            }
 
-            case '/': {
+            case t_div: {
                 x_op = op_div;
                 x_op_prec = 20;
-            }
                 break;
+            }
 
-            case '*': {
+            case t_mul: {
                 x_op = op_mul;
                 x_op_prec = 20;
-            }
                 break;
-
-            default: {
-                backtrack_start(fe);
-                return 1;
             }
+
+            default: return 1;
         }
 
         //dont parse any more
-        if (x_op_prec < op_prec) {
-            backtrack_start(fe);
-            return 1;
-        }
+        if (x_op_prec < op_prec) break;
+        else parse_next(p); //otherwise increment parser
 
         //op already exists, detach
         //happens every time after first loop since each loop sets op
@@ -648,28 +640,39 @@ int parse_expr(frontend* fe, expr* x_expr, unsigned op_prec) {
             parse_detach(x_expr);
         }
 
-        x_expr->op = x_op;
+        expr* r_expr;
 
-        expr r_expr;
-        if (!parse_expr(fe, &r_expr, x_op_prec)) return throw(fe, NULL, "expected expression after operator");
-        parse_set_right(x_expr, &r_expr);
+        //allocate or alias, depending on whether left side exists
+        if (left) r_expr = malloc(sizeof(expr));
+        else r_expr = x_expr;
+
+        if (!parse_expr(p, r_expr, x_op_prec)) {
+            if (left) free(r_expr);
+            throw(p->fe, &p->x.s, "expected expression after operator");
+            return 1;
+        }
+
+        if (left) {
+            x_expr->op = x_op;
+            x_expr->right=r_expr;
+        }
+
+        left=1; //left now exists whether it did or not
     }
+
+    return 1;
 }
 
 void print_expr(expr* e) {
     switch (e->left) {
         case left_num: print_num((num*)e->left_ref); break;
-        case left_expr: print_expr((expr*)e->left_ref); break;
+        case left_expr: printf("("); print_expr((expr*)e->left_ref); printf(")"); break;
         case left_access: {
-            char* s = spanstr((span*)e->left_ref);
-            printf("access %s", s);
-            free(s);
+            printf("%s", (char*)e->left_ref);
             break;
         }
         case left_call: {
-            char* s = spanstr(&((fn_call*)e->left_ref)->target);
-            printf("call %s", s);
-            free(s);
+            printf("%s()", (char*)e->left_ref);
             break;
         }
     }
@@ -689,69 +692,70 @@ typedef struct {
     type_id ty;
 } arg;
 
-int parse_top(frontend* fe, top* v) {
-    type_id x;
-    if (!parse_type_id(fe, &x)) return 0;
-    v->ty = x;
-
-    if (!parse_id(fe)) return throw(fe, NULL, "expected identifier");
-    v->name = fe->pos;
-
-    if (!parse_skip(fe)) return throw(fe, NULL, "expected function or item definition");
-
-    if (fe->x == '(') {
-        v->func = 1;
-        v->args = vector_new(sizeof(arg));
-
-        //similar to parse_expr's fn call handling
-        while (parse_skip(fe), fe->x != ')') {
-            //no paren, go back
-            backtrack(fe, 1);
-
-            type_id arg_t;
-
-            if (!parse_type_id(fe, &arg_t)) return throw(fe, NULL, "expected argument type");
-            if (!parse_id(fe)) return throw(fe, NULL, "expected argument identifier");
-
-            arg arg = {.name=fe->pos, .ty=arg_t};
-            vector_push(&v->args, &arg);
-
-            //consume comma, if exists
-            parse_skip(fe);
-            if (fe->x != ',') {
-                backtrack(fe, 1);
-            }
-        }
-    } else if (fe->x != '=') {
-        return throw(fe, NULL, "expected ( or =");
-    }
-
-    parse_skip(fe);
-    if (fe->x == '{') {
-        parse_skip(fe);
-
-    } else {
-
-    }
-
-    map* scope = vector_get(&fe->scope, fe->scope.length-1);
-
-    char* name_s = spanstr(&v->name);
-    map_insert(scope, name_s, &v);
-    free(name_s);
-
-    return 1;
-}
+//int parse_top(frontend* fe, top* v) {
+//    type_id x;
+//    if (!parse_type_id(fe, &x)) return 0;
+//    v->ty = x;
+//
+//    if (!parse_id(fe)) return throw(fe, NULL, "expected identifier");
+//    v->name = fe->pos;
+//
+//    if (!parse_skip(fe)) return throw(fe, NULL, "expected function or item definition");
+//
+//    if (fe->x == '(') {
+//        v->func = 1;
+//        v->args = vector_new(sizeof(arg));
+//
+//        //similar to parse_expr's fn call handling
+//        while (parse_skip(fe), fe->x != ')') {
+//            //no paren, go back
+//            backtrack(fe, 1);
+//
+//            type_id arg_t;
+//
+//            if (!parse_type_id(fe, &arg_t)) return throw(fe, NULL, "expected argument type");
+//            if (!parse_id(fe)) return throw(fe, NULL, "expected argument identifier");
+//
+//            arg arg = {.name=fe->pos, .ty=arg_t};
+//            vector_push(&v->args, &arg);
+//
+//            //consume comma, if exists
+//            parse_skip(fe);
+//            if (fe->x != ',') {
+//                backtrack(fe, 1);
+//            }
+//        }
+//    } else if (fe->x != '=') {
+//        return throw(fe, NULL, "expected ( or =");
+//    }
+//
+//    parse_skip(fe);
+//    if (fe->x == '{') {
+//        parse_skip(fe);
+//
+//    } else {
+//
+//    }
+//
+//    map* scope = vector_get(&fe->scope, fe->scope.length-1);
+//
+//    char* name_s = spanstr(&v->name);
+//    map_insert(scope, name_s, &v);
+//    free(name_s);
+//
+//    return 1;
+//}
 
 ///initialize frontend with file
 int read_file(frontend* fe, char* filename) {
-    FILE* f = fopen(filename, "r");
+    FILE* f = fopen(filename, "rb");
     if (!f) return 0;
 
     fseek(f, 0, SEEK_END);
     //allocate length of string
     unsigned long len = ftell(f);
-    char* str = malloc(len);
+    char* str = malloc(len+1);
+    str[len] = 0;
     //back to beginning
     rewind(f);
 
@@ -763,25 +767,11 @@ int read_file(frontend* fe, char* filename) {
     fe->s.end = str+len;
     fe->len = len;
 
-    fe->pos.start=str;
-    fe->pos.end=str;
-
-    fe->line=0;
-    fe->col=0;
-
     return 1;
 }
 
 frontend make_frontend(char* file) {
-    frontend fe = {
-        .x=0,
-        .scope=vector_new(sizeof(map))
-    };
-
-    map x = map_new();
-    map_configure_string_key(&x, sizeof(top));
-    //copy to heap...
-    vector_push(&fe.scope, &x);
+    frontend fe = {.tokens=vector_new(sizeof(token))};
 
     read_file(&fe, file);
 
@@ -791,10 +781,12 @@ frontend make_frontend(char* file) {
 void fe_free(frontend* fe) {
     free(fe->s.start);
 
-    vector_iterator i = vector_iterate(&fe->scope);
+    vector_iterator i = vector_iterate(&fe->tokens);
     while (vector_next(&i)) {
-        map_free(i.x);
+        if (((token*)i.x)->val) {
+            free(((token*)i.x)->val);
+        }
     }
 
-    vector_free(&fe->scope);
+    vector_free(&fe->tokens);
 }
