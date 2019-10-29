@@ -32,8 +32,8 @@ int main(int argc, char** argv) {
         char* v = malloc(31);
         rand_string(v, 30);
 
-        map_insert(&x, key, v);
-        map_find(&x, key);
+        map_insert(&x, &key, v);
+        if (map_find(&x, &key)==NULL) return 1;
     }
 
     float end_time = (float)clock() / CLOCKS_PER_SEC;

@@ -71,12 +71,12 @@ static uint8_t make_h2(uint64_t hash) {
 }
 
 /// uses siphash
-uint64_t hash_string(char* x) {
-    return siphash24((uint8_t*)x, strlen(x), (char*)SIPHASH_KEY.key);
+uint64_t hash_string(char** x) {
+    return siphash24((uint8_t*)*x, strlen(*x), (char*)SIPHASH_KEY.key);
 }
 
-int compare_string(char* left, char* right) {
-    return strcmp(left, right);
+int compare_string(char** left, char** right) {
+    return strcmp(*left, *right);
 }
 
 unsigned long map_bucket_size(map* map) {
@@ -123,7 +123,7 @@ int map_load_factor(map* map) {
 }
 
 uint16_t mask(bucket* bucket, uint8_t h2) {
-    __m128i control_byte_vec = _mm_loadu_si64(bucket->control_bytes);
+    __m128i control_byte_vec = _mm_loadu_si128((const __m128i_u*)bucket->control_bytes);
 
     __m128i result = _mm_cmpeq_epi8(_mm_set1_epi8(h2), control_byte_vec);
     return _mm_movemask_epi8(result);
@@ -234,13 +234,25 @@ void* map_find(map* map, void* key) {
     return NULL;
 }
 
-char* map_probe_insert(map_probe_iterator* probe) {
+typedef struct {
+    char* pos;
+    /// 1 if already existent
+    char exists;
+} map_probe_insert_result;
+
+map_probe_insert_result map_probe_insert(map_probe_iterator* probe) {
+    map_probe_insert_result res = {.exists=0};
+
     unsigned char c;
     bucket* bucket_ref=NULL;
 
     while (map_probe_next(probe)) {
-        //already exists, cannot insert
-        if (map_probe_match(probe)) return NULL;
+        //already exists, overwrite
+        char* probe_match = map_probe_match(probe);
+        if (probe_match) {
+            res.exists=1;
+            res.pos = probe_match;
+        }
 
         uint16_t empty = map_probe_empty(probe);
 
@@ -262,12 +274,16 @@ char* map_probe_insert(map_probe_iterator* probe) {
         if (empty == MAP_PROBE_EMPTY) break;
     }
 
-    if (!bucket_ref) return NULL;
+    if (!bucket_ref) {
+        res.pos=NULL;
+        return res;
+    }
 
     //set h2
     bucket_ref->control_bytes[c] = probe->h2;
     //return insertion point
-    return (char*)bucket_ref + CONTROL_BYTES + (probe->map->size * c);
+    res.pos = (char*)bucket_ref + CONTROL_BYTES + (probe->map->size * c);
+    return res;
 }
 
 //returns the item which can be used/copied if the hashmap is not being used in parallel
@@ -308,29 +324,32 @@ void map_resize(map* map) {
 
                 map_probe_iterator probe = map_probe_hashed(map, iter.current, h1, make_h2(hash));
                 //copy things over
-                void* insertion = map_probe_insert(&probe);
-                memcpy(insertion, iter.current, map->size);
+                map_probe_insert_result insertion = map_probe_insert(&probe);
+                memcpy(insertion.pos, iter.current, map->size);
             }
         }
     }
 }
 
-/// one if success
+/// replaces old value, one if already existed
 int map_insert(map* map, void* key, void* v) {
     map_probe_iterator probe = map_probe(map, key);
 
-    char* pos = map_probe_insert(&probe);
-    if (!pos) return 0; //no bucket found
+    map_probe_insert_result insertion = map_probe_insert(&probe);
 
-    //store key
-    memcpy(pos, key, map->key_size);
+    //key already exists, skip insertion
+    if (!insertion.exists) {
+        //store key
+        memcpy(insertion.pos, key, map->key_size);
+    }
+
     //store value
-    memcpy(pos + map->key_size, v, map->size - map->key_size);
+    memcpy(insertion.pos + map->key_size, v, map->size - map->key_size);
 
     map->length++;
 
     map_resize(map);
-    return 1;
+    return insertion.exists;
 }
 
 int map_remove(map* map, void* key) {

@@ -15,7 +15,8 @@ vector vector_new(unsigned long size) {
     return vec;
 }
 
-void vector_push(vector* vec, void* x) {
+/// returns ptr to new element
+void* vector_push(vector* vec, void* x) {
     vec->length++;
 
     //allocate or reallocate
@@ -24,6 +25,8 @@ void vector_push(vector* vec, void* x) {
     else vec->data = realloc(vec->data, vec->size*vec->length);
 
     memcpy(vec->data + (vec->length-1)*vec->size, x, vec->size);
+
+    return vec->data + (vec->length-1)*vec->size;
 }
 
 void* vector_pop(vector* vec) {
