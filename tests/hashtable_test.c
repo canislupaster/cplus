@@ -1,4 +1,4 @@
-#include "hashtable.c"
+#include "../src/hashtable.c"
 
 #include "stdio.h"
 #include "time.h"
@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
         char* v = malloc(31);
         rand_string(v, 30);
 
-        map_insert(&x, &key, v);
+        map_insertcpy(&x, &key, v);
         if (map_find(&x, &key)==NULL) return 1;
     }
 

@@ -15,8 +15,8 @@ vector vector_new(unsigned long size) {
     return vec;
 }
 
-/// returns ptr to new element
-void* vector_push(vector* vec, void* x) {
+/// returns ptr to insertion point
+void* vector_push(vector* vec) {
     vec->length++;
 
     //allocate or reallocate
@@ -24,9 +24,13 @@ void* vector_push(vector* vec, void* x) {
         vec->data = malloc(vec->size);
     else vec->data = realloc(vec->data, vec->size*vec->length);
 
-    memcpy(vec->data + (vec->length-1)*vec->size, x, vec->size);
-
     return vec->data + (vec->length-1)*vec->size;
+}
+
+void* vector_pushcpy(vector* vec, void* x) {
+    void* pos = vector_push(vec);
+    memcpy(pos, x, vec->size);
+    return pos;
 }
 
 void* vector_pop(vector* vec) {
@@ -89,5 +93,5 @@ int vector_next(vector_iterator* iter) {
 }
 
 void vector_free(vector* vec) {
-    free(vec->data);
+    if (vec->data) free(vec->data);
 }

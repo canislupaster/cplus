@@ -1,4 +1,8 @@
-#include "frontend.c"
+#include "parser.c"
+
+typedef enum {
+    i_add, i_sub
+} instruction;
 
 typedef struct {
     frontend* fe;
@@ -17,8 +21,14 @@ typedef enum {
     t_void, t_func, t_compound
 } prim_type;
 
-int generalize_prim(prim_type x) {
-    switch (x) {
+typedef struct {
+    prim_type prim;
+    type_flags flags;
+    void* compound_type;
+} validate_type;
+
+int t_generalize(validate_type* x) {
+    switch (x->prim) {
         case t_int:
         case t_i8: case t_i16: case t_i32: case t_i64:
             return t_int;
@@ -28,36 +38,10 @@ int generalize_prim(prim_type x) {
             return t_uint;
 
         default:
-            return x;
+            if (x->flags & ty_ptr) return t_void; //void* can be implicitly casted to pointers of any type
+            else return x->prim;
     }
 }
-
-// ...
-prim_type prim_from_str(char* s) {
-    if (strcmp(s, "i8")==0) return t_i8;
-    else if (strcmp(s, "i16")==0) return t_i16;
-    else if (strcmp(s, "i32")==0) return t_i32;
-    else if (strcmp(s, "i64")==0) return t_i64;
-    else if (strcmp(s, "u8")==0) return t_u8;
-    else if (strcmp(s, "u16")==0) return t_u16;
-    else if (strcmp(s, "u32")==0) return t_u32;
-    else if (strcmp(s, "u64")==0) return t_u64;
-    else if (strcmp(s, "f8")==0) return t_f8;
-    else if (strcmp(s, "f16")==0) return t_f16;
-    else if (strcmp(s, "f32")==0) return t_f32;
-    else if (strcmp(s, "f64")==0) return t_f64;
-    else if (strcmp(s, "bool")==0) return t_bool;
-    else if (strcmp(s, "str")==0) return t_str;
-    else if (strcmp(s, "char")==0) return t_char;
-    else if (strcmp(s, "void")==0) return t_void;
-    else return t_compound;
-}
-
-typedef struct {
-    prim_type prim;
-    type_flags flags;
-    void* compound_type;
-} validate_type;
 
 validate_type from_prim(prim_type x) {
     validate_type vt = {.prim=x, .flags=0, .compound_type=NULL};
@@ -70,33 +54,6 @@ prim_type prim_type_from_num(num* n) {
         case num_integer: return t_int;
         case num_unsigned: return t_uint;
     }
-}
-
-void specialize_prim(validate_type* vt) {
-    switch (vt->prim) {
-        case t_int: vt->prim = t_i32;
-        case t_uint: vt->prim = t_u32;
-        case t_float: vt->prim = t_f32;
-
-        default:;
-    }
-}
-
-void implicit_cast_prim(validate_type* vt1, validate_type* vt2) {
-    if (vt1->prim == vt2->prim) {
-        return;
-    } else if (vt1->prim == generalize_prim(vt2->prim)) {
-        vt1->prim = vt2->prim;
-    } else if (vt2->prim == generalize_prim(vt1->prim)) {
-        vt2->prim = vt1->prim;
-    }
-}
-
-/// compares from and to with the premise that from is being coerced into to
-int type_eq(validate_type* from, validate_type* to) {
-    return from->prim == to->prim
-           && (from->flags == to->flags //if either flags==flags or flags==flags without const
-           || from->flags == (to->flags & ~ty_const)); //TODO: compare compound types
 }
 
 int type_from_id(validator* v, validate_type* vt, type_id* tid) {
@@ -117,8 +74,10 @@ int type_from_id(validator* v, validate_type* vt, type_id* tid) {
 }
 
 int scope_insert(validator* v, char* name, stmt* s) {
-    vector_push(&v->new_scope, &name);
-    map_insert(v.)
+    char** x = vector_push(&v->new_scope);
+    *x = name;
+
+    map_insert(&v->scope, &name, &s);
 }
 
 int type_check_block(validator* v, validate_type* vt, block* b);

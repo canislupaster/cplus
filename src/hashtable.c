@@ -38,7 +38,8 @@ typedef struct {
     char c;
     unsigned long bucket;
 
-    void* current;
+    void* key;
+    void* x;
     char current_c;
     bucket* bucket_ref;
 } map_iterator;
@@ -133,7 +134,7 @@ map_iterator map_iterate(map* map) {
     map_iterator iterator = {
         map,
         .bucket=0, .c=0,
-        .bucket_ref=NULL, .current=NULL
+        .bucket_ref=NULL, .key=NULL
     };
 
     return iterator;
@@ -145,13 +146,14 @@ int map_next(map_iterator* iterator) {
     while (iterator->bucket < iterator->map->num_buckets) {
         iterator->bucket_ref = (bucket*)(iterator->map->buckets + map_bucket_size(iterator->map)*iterator->bucket);
 
-        //if filled, update current
+        //if filled, update key
         unsigned char filled = iterator->bucket_ref->control_bytes[iterator->c] != 0
                 && iterator->bucket_ref->control_bytes[iterator->c] != MAP_SENTINEL_H2;
 
         if (filled) {
             iterator->current_c = iterator->c;
-            iterator->current = (char*)iterator->bucket_ref + CONTROL_BYTES + (iterator->map->size * iterator->c);
+            iterator->key = (char*)iterator->bucket_ref + CONTROL_BYTES + (iterator->map->size * iterator->c);
+            iterator->x = iterator->key + iterator->map->key_size;
         }
 
         //increment byte or bucket
@@ -160,7 +162,7 @@ int map_next(map_iterator* iterator) {
             iterator->c = 0;
         }
 
-        //if filled (we've already updated current, return
+        //if filled (we've already updated key, return
         if (filled) {
             return 1;
         }
@@ -228,7 +230,7 @@ void* map_find(map* map, void* key) {
     map_probe_iterator probe = map_probe(map, key);
     while (map_probe_next(&probe) && map_probe_empty(&probe) != MAP_PROBE_EMPTY) {
         void* x = map_probe_match(&probe);
-        if (x) return x;
+        if (x) return x + map->key_size;
     }
 
     return NULL;
@@ -315,24 +317,29 @@ void map_resize(map* map) {
         //rehash
         map_iterator iter = map_iterate(map);
         while (map_next(&iter) && iter.bucket < old_num_buckets) {
-            uint64_t hash = map->hash(iter.current);
+            uint64_t hash = map->hash(iter.key);
             uint64_t h1 = make_h1(hash);
 
             //if it has moved buckets, remove and insert into new bucket
             if (h1 % map->num_buckets != iter.bucket) {
                 iter.bucket_ref->control_bytes[iter.current_c] = 0x80;
 
-                map_probe_iterator probe = map_probe_hashed(map, iter.current, h1, make_h2(hash));
+                map_probe_iterator probe = map_probe_hashed(map, iter.key, h1, make_h2(hash));
                 //copy things over
                 map_probe_insert_result insertion = map_probe_insert(&probe);
-                memcpy(insertion.pos, iter.current, map->size);
+                memcpy(insertion.pos, iter.key, map->size);
             }
         }
     }
 }
 
+typedef struct {
+    void* val;
+    char exists;
+} map_insert_result;
+
 /// replaces old value, one if already existed
-int map_insert(map* map, void* key, void* v) {
+map_insert_result map_insertcpy(map* map, void* key, void* v) {
     map_probe_iterator probe = map_probe(map, key);
 
     map_probe_insert_result insertion = map_probe_insert(&probe);
@@ -343,13 +350,23 @@ int map_insert(map* map, void* key, void* v) {
         memcpy(insertion.pos, key, map->key_size);
     }
 
+    insertion.pos += map->key_size;
     //store value
-    memcpy(insertion.pos + map->key_size, v, map->size - map->key_size);
+    memcpy(insertion.pos, v, map->size - map->key_size);
 
     map->length++;
 
     map_resize(map);
-    return insertion.exists;
+
+    map_insert_result res = {.val=insertion.pos, .exists=insertion.exists};
+    return res;
+}
+
+void map_copy(map* from, map* to) {
+    *to = *from;
+    to->buckets = malloc(from->num_buckets*map_bucket_size(from));
+    //copy all data
+    memcpy(to->buckets, from->buckets, from->num_buckets*map_bucket_size(from));
 }
 
 int map_remove(map* map, void* key) {
