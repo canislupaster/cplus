@@ -338,8 +338,9 @@ typedef struct {
     char exists;
 } map_insert_result;
 
-/// replaces old value, one if already existed
-map_insert_result map_insertcpy(map* map, void* key, void* v) {
+map_insert_result map_insert(map* map, void* key) {
+    map_resize(map); //resize before insert to preserve reference integrity
+
     map_probe_iterator probe = map_probe(map, key);
 
     map_probe_insert_result insertion = map_probe_insert(&probe);
@@ -351,14 +352,19 @@ map_insert_result map_insertcpy(map* map, void* key, void* v) {
     }
 
     insertion.pos += map->key_size;
-    //store value
-    memcpy(insertion.pos, v, map->size - map->key_size);
 
     map->length++;
 
-    map_resize(map);
-
     map_insert_result res = {.val=insertion.pos, .exists=insertion.exists};
+    return res;
+}
+
+/// replaces old value, one if already existed
+map_insert_result map_insertcpy(map* map, void* key, void* v) {
+    map_insert_result res = map_insert(map, key);
+    //store value
+    memcpy(res.val, v, map->size - map->key_size);
+
     return res;
 }
 

@@ -56,7 +56,7 @@ typedef enum {
 typedef struct {
     prim_type prim;
 
-    void* compound_type;
+    void* data;
 
     unsigned long size;
 
@@ -88,7 +88,7 @@ prim_type prim_from_str(char* s) {
 char* prim_str(typedata* td) {
     //type is compound and is resolved
     if (td->prim == t_compound) {
-        if (!td->compound_type) return "(unresolved type)";
+        if (!td->data) return "(unresolved type)";
         return NULL; //TODO: typedefs
     } else {
         switch (td->prim) {
@@ -295,7 +295,7 @@ int throw(frontend* fe, span* s, const char* x) {
 }
 
 void warn(frontend* fe, span* s, const char* x) {
-    msg(fe, s, "warning in %s", "warning at %s:%lu:%lu:", x);
+    msg(fe, s, "warning in %s", "warning at %s:%lu:%lu: ", x);
 }
 
 void note(frontend* fe, span* s, const char* x) {
