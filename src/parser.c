@@ -65,6 +65,8 @@ typedef enum {
     left_decr_after = 0x200
 } left;
 
+const int left_num_op = left_incr | left_incr_after | left_decr | left_decr_after | left_neg;
+
 typedef struct {
     type_id ty;
     char* name;
@@ -116,6 +118,8 @@ typedef struct {
 int parse_expr(parser* p, expr* x_expr, unsigned op_prec); //forward decl
 
 int generalize(typedata* x) {
+    if (x->flags & ty_ptr) return t_ptr;
+
     switch (x->prim) {
         case t_int:
         case t_i8: case t_i16: case t_i32: case t_i64:
@@ -189,7 +193,7 @@ int parse_length(parser* p, unsigned long* x) {
         if (parse_next_eq(p, t_num)) {
             num* n = p->x.val;
             if (n->ty != num_integer) return throw(p->fe, &p->x.s, "expected integer");
-            *x = num_to_long(n);
+            *x = n->uint;
         }
 
         if (!parse_next_eq(p, t_ridx)) {
@@ -280,23 +284,46 @@ void block_subinit(parser* p, block* b) {
     }
 }
 
+void insert_unresolved(block* b, char* target, stmt* unresolved) {
+    vector* x = map_find(&b->unresolved, &target);
+
+    if (!x) {
+        //initialize new vector
+        x = map_insert(&b->unresolved, &target).val;
+        *x = vector_new(sizeof(stmt));
+    }
+
+    vector_pushcpy(x, unresolved);
+}
+
 void block_subend(block* superblock, block* b) {
     // copy unresolved stuff to superblock
     map_iterator iter = map_iterate(&b->unresolved);
     while (map_next(&iter)) {
-        map_insertcpy(&superblock->unresolved, iter.key, iter.x);
+        vector* vec = iter.x;
+        vector_iterator iter2 = vector_iterate(vec);
+
+        while (vector_next(&iter2)) {
+            stmt* unresolved = iter2.x;
+            insert_unresolved(superblock, iter.key, unresolved);
+        }
     }
 }
 
 // pretty much the same except we throw errors here
 void block_end(parser* p, block* b) {
-    map_iterator iter = map_iterate(&b->declarations);
+    map_iterator iter = map_iterate(&b->unresolved);
     while (map_next(&iter)) {
-        stmt* s = iter.x;
-        if (s->t == s_unresolved_type) {
-            throw(p->fe, &s->s, "unresolved type");
-        } else if (s->t == s_unresolved_fn) {
-            throw(p->fe, &s->s, "unresolved function");
+        vector* vec = iter.x;
+        vector_iterator iter2 = vector_iterate(vec);
+
+        while (vector_next(&iter2)) {
+            stmt* s = iter2.x;
+            if (s->t == s_unresolved_type) {
+                throw(p->fe, &s->s, "unresolved type");
+            } else if (s->t == s_unresolved_fn) {
+                throw(p->fe, &s->s, "unresolved function");
+            }
         }
     }
 }
@@ -644,15 +671,7 @@ void resolve(parser* p, char* target, span s, stmt_t t, void* validate, size_t v
         unresolved.x = malloc(validate_size);
         memcpy(unresolved.x, validate, validate_size);
 
-        vector* x = map_find(&p->current->unresolved, &target);
-
-        if (!x) {
-            //initialize new vector
-            x = map_insert(&p->current->unresolved, &target).val;
-            *x = vector_new(sizeof(stmt));
-        }
-
-        vector_pushcpy(x, &unresolved);
+        insert_unresolved(p->current, target, &unresolved);
     }
 }
 
@@ -763,7 +782,18 @@ int parse_left_expr(parser* p, expr* x_expr) {
     if (parse_next_eq(p, t_incr)) x_expr->left |= left_incr_after;
     if (parse_next_eq(p, t_decr)) x_expr->left |= left_decr_after;
 
-    // quick check to find if we are negating an unsigned value
+    prim_type generalized = generalize(&x_expr->left_ty);
+    int num_type = generalized == t_uint || generalized == t_int || generalized == t_float || generalized == t_ptr;
+
+    //quick "type" checks
+    if (x_expr->left & left_num_op && !num_type) {
+        throw(p->fe, &x_expr->left_span, isprintf("cannot increment/decrement a %s", type_str(&x_expr->left_ty)));
+    }
+
+    if (x_expr->left & left_call && !(x_expr->left & left_access)) {
+        throw(p->fe, &x_expr->left_span, "cannot call a literal");
+    }
+
     if (generalize(&x_expr->left_ty) == t_uint && x_expr->left & left_neg) {
         throw(p->fe, &x_expr->left_span, "cannot negate an unsigned value");
     }

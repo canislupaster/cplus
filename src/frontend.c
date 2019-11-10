@@ -39,7 +39,7 @@ typedef struct {
 
 typedef enum {
     t_any, //type used for unresolved stuffs
-    t_int, t_uint, t_float,
+    t_int, t_uint, t_float, t_ptr, //t_ptr used when generalizing a ptr type
 
     t_i8, t_i16, t_i32, t_i64,
     t_u8, t_u16, t_u32, t_u64,
@@ -50,7 +50,7 @@ typedef enum {
 } prim_type;
 
 typedef enum {
-    ty_const = 0x01, ty_ptr = 0x02, ty_arr = 0x04
+    ty_const = 0x01, ty_ptr = 0x02, ty_arr = 0x04, ty_inline = 0x08
 } type_flags;
 
 typedef struct {
@@ -136,6 +136,8 @@ typedef struct {
     /// copied into lower scopes
     /// sorry it sucks im so sorry please forgive me
     map declarations;
+    ///
+    map used_declarations;
     /// map of all unresolved declarations <-> statement pointers for new defines
     /// copied into higher scopes
     map unresolved;
@@ -309,39 +311,24 @@ typedef struct {
         num_unsigned
     } ty;
 
-    /// vector of char
-    vector digits;
-    /// counted from right if number is a decimal
-    unsigned decimal_place;
+    union {
+        uint64_t uint;
+        int64_t integer;
+        double decimal;
+    };
 } num;
 
-unsigned long num_to_long(num* n) {
-    unsigned long x=0;
-
-    vector_iterator iter = vector_iterate(&n->digits);
-    iter.rev=1; //iterate in reverse
-
-    while (vector_next(&iter)) {
-        unsigned long i = (unsigned long)*((char*)iter.x);
-        x *= i * (10^(iter.i-1));
-    }
-
-    return x;
-}
-
 void print_num(num* n) {
-    vector_iterator iter = vector_iterate(&n->digits);
-    while (vector_next(&iter)) {
-        if (n->ty == num_decimal && n->digits.length - iter.i == n->decimal_place) {
-            printf(".");
-        }
-        printf("%u", *(unsigned char*)iter.x);
+    switch (n->ty) {
+        case num_decimal: printf("%f", n->decimal); break;
+        case num_integer: printf("%lli", n->integer); break;
+        case num_unsigned: printf("%llu", n->uint); break;
     }
 }
 
 typedef enum {
     t_lparen, t_rparen, t_lbrace, t_rbrace, t_lidx, t_ridx,
-    t_id, t_const, t_return, t_if, t_else,
+    t_id, t_const, t_inline, t_return, t_if, t_else,
     t_mul, t_ref, t_num, t_comma, t_sep, t_set,
     t_add, t_sub, t_div, t_mod,
     t_incr, t_decr,
@@ -480,21 +467,41 @@ void lex(frontend* fe) {
             case '0' ... '9': {
                 num num;
 
-                num.digits = vector_new(sizeof(char));
+                vector digits = vector_new(sizeof(char));
+                unsigned long decimal_place=0;
                 num.ty = num_integer;
 
                 do {
                     if (l.x >= '0' && l.x <= '9') {
-                        unsigned char* x = vector_push(&num.digits);
-                        *x = l.x - '0';
+                        int val = l.x - '0';
+                        //modify decimal or uint
+                        if (num.ty == num_decimal) {
+                            num.decimal += (double)val / (10^decimal_place);
+                        } else {
+                            uint64_t old_val = num.uint;
+
+                            num.uint *= 10;
+                            num.uint += val;
+
+                            if (num.uint <= old_val) {
+                                throw(fe, &l.pos, "integer overflow");
+                                break;
+                            }
+                        }
                         //increment num_decimal place
-                        num.decimal_place++;
+                        decimal_place++;
                     } else if (l.x == '.') {
+                        if (num.ty == num_decimal) { // already marked decimal
+                            throw(fe, &l.pos, "decimal numbers cannot have multiple dots");
+                            break;
+                        }
+
                         num.ty = num_decimal;
-                        num.decimal_place = 0;
+                        num.decimal = (double)num.uint;
+                        decimal_place = 0;
                     } else if (l.x == 'u') {
                         if (num.ty == num_decimal) {
-                            throw(fe, &l.pos, "num_decimal numbers cannot be marked unsigned");
+                            throw(fe, &l.pos, "decimal numbers cannot be marked unsigned");
                             break;
                         }
 
@@ -504,6 +511,15 @@ void lex(frontend* fe) {
                         break;
                     }
                 } while(lex_next(&l));
+
+                if (num.ty == num_integer) {
+                    //convert uint to integer
+                    num.integer = (int64_t)num.uint;
+
+                    if ((uint64_t)num.integer < num.uint) {
+                        throw(fe, &l.pos, "integer overflow");
+                    }
+                }
 
                 token_push_val(&l, t_num, &num, sizeof(num));
                 break;
@@ -520,6 +536,7 @@ void lex(frontend* fe) {
                 else if (strcmp(s, "if")==0) token_push(&l, t_if);
                 else if (strcmp(s, "else")==0) token_push(&l, t_else);
                 else if (strcmp(s, "const")==0) token_push(&l, t_const);
+                else if (strcmp(s, "inline")==0) token_push(&l, t_inline);
                 else token_push_val(&l, t_id, spanstr(&l.pos), spanlen(&l.pos) + 1);
 
                 break;
