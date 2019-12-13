@@ -12,6 +12,7 @@ typedef struct {
     char* end;
 } span;
 
+/// statements are expressions, blocks, or bindings that are each distinct, have a span, and have a type
 typedef enum {
     s_typedef, s_fn,
     s_block, s_ret_block,
@@ -19,38 +20,24 @@ typedef enum {
     s_expr, s_ret,
 
     s_fn_arg, //arguments will be referenced using this "statement"
-
-    s_unresolved_fn,
-    s_unresolved_type
 } stmt_t;
 
-typedef struct {
-    stmt_t t;
-    span s;
-    void* x;
-} stmt;
-
-typedef struct {
-    enum {ENUM, STRUCT, UNION} kind;
-
-    size_t size;
-    vector members;
-} parse_type;
-
 typedef enum {
-    t_any, //type used for unresolved stuffs
-    t_int, t_uint, t_float, t_ptr, //t_ptr used when generalizing a ptr type
+    ty_any, //type used for unresolved stuffs
+    ty_meta, //generalizes meta types
+    ty_int, ty_uint, ty_float, t_ptr, //t_ptr used when generalizing a ptr type
 
-    t_i8, t_i16, t_i32, t_i64,
-    t_u8, t_u16, t_u32, t_u64,
-    t_f8, t_f16, t_f32, t_f64,
+    ty_i8, ty_i16, ty_i32, ty_i64,
+    ty_u8, ty_u16, ty_u32, ty_u64,
+    ty_f8, ty_f16, ty_f32, ty_f64,
 
-    t_bool, t_str, t_char,
-    t_void, t_func, t_compound
+    ty_bool, ty_str, ty_char,
+    ty_void, ty_func, ty_compound,
 } prim_type;
 
 typedef enum {
-    ty_const = 0x01, ty_ptr = 0x02, ty_arr = 0x04, ty_inline = 0x08
+    ty_f_meta = 0x01, //it would be cleaner to have typedata referenced in the data attribute in meta types, but that is slow and hard
+    ty_const = 0x02, ty_ptr = 0x04, ty_arr = 0x08, ty_inline = 0x10
 } type_flags;
 
 typedef struct {
@@ -63,63 +50,72 @@ typedef struct {
     type_flags flags;
 } typedata;
 
+typedef struct {
+    stmt_t t;
+    span s;
+    void* x;
+} stmt;
+
 // ...
 prim_type prim_from_str(char* s) {
-    if (strcmp(s, "i8")==0) return t_i8;
-    else if (strcmp(s, "i16")==0) return t_i16;
-    else if (strcmp(s, "i32")==0) return t_i32;
-    else if (strcmp(s, "i64")==0) return t_i64;
-    else if (strcmp(s, "u8")==0) return t_u8;
-    else if (strcmp(s, "u16")==0) return t_u16;
-    else if (strcmp(s, "u32")==0) return t_u32;
-    else if (strcmp(s, "u64")==0) return t_u64;
-    else if (strcmp(s, "f8")==0) return t_f8;
-    else if (strcmp(s, "f16")==0) return t_f16;
-    else if (strcmp(s, "f32")==0) return t_f32;
-    else if (strcmp(s, "f64")==0) return t_f64;
-    else if (strcmp(s, "bool")==0) return t_bool;
-    else if (strcmp(s, "str")==0) return t_str;
-    else if (strcmp(s, "char")==0) return t_char;
-    else if (strcmp(s, "void")==0) return t_void;
-    else return t_compound;
+    if (strcmp(s, "i8")==0) return ty_i8;
+    else if (strcmp(s, "i16")==0) return ty_i16;
+    else if (strcmp(s, "i32")==0) return ty_i32;
+    else if (strcmp(s, "i64")==0) return ty_i64;
+    else if (strcmp(s, "u8")==0) return ty_u8;
+    else if (strcmp(s, "u16")==0) return ty_u16;
+    else if (strcmp(s, "u32")==0) return ty_u32;
+    else if (strcmp(s, "u64")==0) return ty_u64;
+    else if (strcmp(s, "f8")==0) return ty_f8;
+    else if (strcmp(s, "f16")==0) return ty_f16;
+    else if (strcmp(s, "f32")==0) return ty_f32;
+    else if (strcmp(s, "f64")==0) return ty_f64;
+    else if (strcmp(s, "bool")==0) return ty_bool;
+    else if (strcmp(s, "str")==0) return ty_str;
+    else if (strcmp(s, "char")==0) return ty_char;
+    else if (strcmp(s, "void")==0) return ty_void;
+    else return ty_compound;
 }
 
 
 char* prim_str(typedata* td) {
     //type is compound and is resolved
-    if (td->prim == t_compound) {
+    if (td->prim == ty_compound) {
         if (!td->data) return "(unresolved type)";
         return NULL; //TODO: typedefs
     } else {
         switch (td->prim) {
-            case t_int: return "(int)";
-            case t_uint: return "(uint)";
-            case t_float: return "(float)";
-            case t_any: return "(any)";
-            case t_void: return "void";
-            case t_i8: return "i8";
-            case t_i16: return "i16";
-            case t_i32: return "i32";
-            case t_i64: return "i64";
-            case t_u8: return "u8";
-            case t_u16: return "u16";
-            case t_u32: return "u32";
-            case t_u64: return "u64";
-            case t_f8: return "f8";
-            case t_f16: return "f16";
-            case t_f32: return "f32";
-            case t_f64: return "f64";
-            case t_bool: return "bool";
-            case t_str: return "str";
-            case t_char: return "char";
-            case t_func: return "func";
+            case ty_int: return "(int)";
+            case ty_uint: return "(uint)";
+            case ty_float: return "(float)";
+            case t_ptr: return "(ptr)";
+            case ty_any: return "(any)";
+            case ty_void: return "void";
+            case ty_meta: return "type";
+            case ty_i8: return "i8";
+            case ty_i16: return "i16";
+            case ty_i32: return "i32";
+            case ty_i64: return "i64";
+            case ty_u8: return "u8";
+            case ty_u16: return "u16";
+            case ty_u32: return "u32";
+            case ty_u64: return "u64";
+            case ty_f8: return "f8";
+            case ty_f16: return "f16";
+            case ty_f32: return "f32";
+            case ty_f64: return "f64";
+            case ty_bool: return "bool";
+            case ty_str: return "str";
+            case ty_char: return "char";
+            case ty_func: return "func";
         }
     }
 }
 
 char* type_str(typedata* td) {
     char* const_str = "";
-    if (td->flags & ty_const) const_str = "const";
+    //only use const if ptr, otherwise having const is insignificant
+    if (td->flags & ty_const && td->flags & ty_ptr) const_str = "const ";
 
     char* ptr_str = "";
     if (td->flags & ty_ptr) ptr_str = "*";
@@ -133,15 +129,7 @@ char* type_str(typedata* td) {
 typedef struct {
     vector stmts;
     /// map of all declarations <-> statement pointers inside scope for validation
-    /// copied into lower scopes
-    /// sorry it sucks im so sorry please forgive me
     map declarations;
-    ///
-    map used_declarations;
-    /// map of all unresolved declarations <-> statement pointers for new defines
-    /// copied into higher scopes
-    map unresolved;
-    typedata ret_type;
 } block;
 
 typedef struct {
@@ -187,12 +175,12 @@ char* spanstr(span* s) {
     return v;
 }
 
-void msg(frontend* fe, span* s, const char* template_empty, const char* template, const char* msg) {
+void msg(frontend* fe, span* s, char color1, char color2, const char* template_empty, const char* template, const char* msg) {
     if (s->start == NULL) {
-        set_col(stderr, RED);
+        set_col(stderr, color1);
         fprintf(stderr, template_empty, fe->file);
 
-        set_col(stderr, WHITE);
+        set_col(stderr, color2);
         fprintf(stderr, "%s\n\n", msg);
     }
 
@@ -240,13 +228,12 @@ void msg(frontend* fe, span* s, const char* template_empty, const char* template
 
     int digits = (int)log10(line+lines.length)+1;
 
-    set_col(stderr, RED);
+    set_col(stderr, color1);
     fprintf(stderr, template, fe->file, line, col);
 
-    set_col(stderr, WHITE);
+    set_col(stderr, color2);
     fprintf(stderr, "%s\n\n", msg);
 
-    set_col(stderr, RED);
     //write lines
     for (unsigned long i=0; i<lines.length; i++) {
         char* line_num = malloc(digits+1);
@@ -263,7 +250,10 @@ void msg(frontend* fe, span* s, const char* template_empty, const char* template
         span* x = vector_get(&lines, i);
 
         char* str = spanstr(x);
-        fprintf(stderr, "%s | %s\n", line_num, str);
+        set_col(stderr, color1);
+        fprintf(stderr, "%s | ", line_num);
+        set_col(stderr, color2);
+        fprintf(stderr, "%s\n", str);
         free(str);
         //check if original span is contained within line, then highlight
         if ((s->end > x->start)
@@ -282,6 +272,7 @@ void msg(frontend* fe, span* s, const char* template_empty, const char* template
                 buf[hi] = '^';
             }
 
+            set_col(stderr, color1);
             fprintf(stderr, "%s | %s\n", line_num, buf);
         }
     }
@@ -292,16 +283,26 @@ void msg(frontend* fe, span* s, const char* template_empty, const char* template
 ///always returns zero for convenience
 int throw(frontend* fe, span* s, const char* x) {
     fe->errored=1;
-    msg(fe, s, "error in %s", "error at %s:%lu:%lu: ", x);
+    msg(fe, s, RED, WHITE, "error in %s", "error at %s:%lu:%lu: ", x);
     return 0;
 }
 
 void warn(frontend* fe, span* s, const char* x) {
-    msg(fe, s, "warning in %s", "warning at %s:%lu:%lu: ", x);
+    msg(fe, s, YELLOW, WHITE, "warning in %s", "warning at %s:%lu:%lu: ", x);
 }
 
 void note(frontend* fe, span* s, const char* x) {
-    msg(fe, s, "note: in %s", "note: at %s:%lu:%lu, ", x);
+    msg(fe, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
+}
+
+void scope_insert(frontend* fe, map* scope, char* name, stmt* s) {
+    stmt* x = map_find(scope, &name);
+    if (x) {
+        throw(fe, &s->s, "name already used");
+        note(fe, &x->s, "declared here");
+    }
+    //still inserted idk why
+    map_insertcpy(scope, &name, s);
 }
 
 typedef struct {
@@ -330,9 +331,11 @@ typedef enum {
     t_lparen, t_rparen, t_lbrace, t_rbrace, t_lidx, t_ridx,
     t_id, t_const, t_inline, t_return, t_if, t_else,
     t_mul, t_ref, t_num, t_comma, t_sep, t_set,
+    t_char, t_str,
     t_add, t_sub, t_div, t_mod,
     t_incr, t_decr,
-    t_not, t_lt, t_gt, t_le, t_ge, t_eq
+    t_not, t_lt, t_gt, t_le, t_ge, t_eq,
+    t_eof
 } token_type;
 
 typedef struct {
@@ -371,14 +374,14 @@ void lex_mark(lexer* l) {
 }
 
 /// returns null when eof
-char lex_peek(lexer* l, int i) {
-    if (l->pos.end+i-1 >= l->fe->s.end) return 0;
-    return *(l->pos.end+i-1);
+char lex_peek(lexer* l) {
+    if (l->pos.end-1 >= l->fe->s.end) return 0;
+    return *(l->pos.end);
 }
 
 /// does not consume if unequal
 int lex_next_eq(lexer* l, char x) {
-    if (lex_peek(l, 1) == x) {
+    if (lex_peek(l) == x) {
         lex_next(l); return 1;
     } else {
         return 0;
@@ -413,12 +416,12 @@ void lex(frontend* fe) {
             case '\n': break; //skip newlines
             case '\r': break; //skip cr(lf)
             case '/': { //consume comments
-                if (lex_peek(&l, 1) == '/') {
+                if (lex_peek(&l) == '/') {
                     lex_next(&l);
                     while (lex_next(&l) && l.x != '\n');
-                } else if (lex_peek(&l, 1) == '*') {
+                } else if (lex_peek(&l) == '*') {
                     lex_next(&l);
-                    while (lex_next(&l) && (l.x != '*' || lex_peek(&l, 1) != '/'));
+                    while (lex_next(&l) && (l.x != '*' || lex_peek(&l) != '/'));
                 } else {
                     token_push(&l, t_div);
                 }
@@ -463,13 +466,63 @@ void lex(frontend* fe) {
             case '<': if (lex_next_eq(&l, '=')) token_push(&l, t_le); else token_push(&l, t_lt); break;
             case '=': if (lex_next_eq(&l, '=')) token_push(&l, t_eq); else token_push(&l, t_set); break;
 
+            //parse character
+            case '\'': {
+                if (lex_next(&l) && l.x == '\\' && lex_next(&l)) { //parse escaped
+                    token_push_val(&l, t_char, &l.x, sizeof(char));
+                } else { //parse unescaped
+                    if (!lex_next(&l) || l.x == '\'') {
+                        throw(fe, &l.pos, "expected character for character literal");
+                        break;
+                    }
+
+                    token_push_val(&l, t_char, &l.x, sizeof(char));
+                }
+
+                if (lex_next(&l) && l.x != '\'') {
+                    throw(fe, &l.pos, "expected end-quote after character");
+                    lex_back(&l);
+                    break;
+                }
+
+                break;
+            }
+
+            //parse string
+            case '\"': {
+                span str_data = {.start=l.pos.end};
+                char escaped=0;
+
+                while (1) {
+                    if (!lex_next(&l)) {
+                        str_data.end = l.pos.end;
+                        throw(fe, &l.pos, "expected end of string");
+                        break;
+                    }
+
+                    if (l.x == '\"' && !escaped) {
+                        str_data.end = l.pos.end;
+                        break;
+                    }
+
+                    if (l.x == '\\' && !escaped) {
+                        escaped=1;
+                    } else {
+                        escaped=0;
+                    }
+                }
+
+                token_push_val(&l, t_str, spanstr(&str_data), spanlen(&str_data) + 1);
+                break;
+            }
+
             case '.':
             case '0' ... '9': {
                 num num;
 
-                vector digits = vector_new(sizeof(char));
                 unsigned long decimal_place=0;
                 num.ty = num_integer;
+                num.uint = 0;
 
                 do {
                     if (l.x >= '0' && l.x <= '9') {
@@ -483,7 +536,7 @@ void lex(frontend* fe) {
                             num.uint *= 10;
                             num.uint += val;
 
-                            if (num.uint <= old_val) {
+                            if (num.uint < old_val) {
                                 throw(fe, &l.pos, "integer overflow");
                                 break;
                             }
@@ -527,7 +580,7 @@ void lex(frontend* fe) {
 
             case 'a' ... 'z':
             case 'A' ... 'Z': {
-                while ((l.x = lex_peek(&l, 1)) &&
+                while ((l.x = lex_peek(&l)) &&
                        ((l.x >= 'a' && l.x <= 'z') || (l.x >= '0' && l.x <= '9') || (l.x == '_')) &&
                        lex_next(&l));
 
@@ -545,6 +598,8 @@ void lex(frontend* fe) {
             default: throw(l.fe, &l.pos, "unrecognized token");
         }
     }
+
+    token_push(&l, t_eof); //push eof token
 }
 
 void token_free(token* t) {
@@ -588,14 +643,12 @@ frontend make_frontend(char* file) {
     return fe;
 }
 
-void fe_free(frontend* fe) {
+void frontend_free(frontend* fe) {
     free(fe->s.start);
 
     vector_iterator i = vector_iterate(&fe->tokens);
     while (vector_next(&i)) {
-        if (((token*)i.x)->val) {
-            free(((token*)i.x)->val);
-        }
+        token_free(i.x);
     }
 
     vector_free(&fe->tokens);
