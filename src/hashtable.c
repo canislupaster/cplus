@@ -124,7 +124,7 @@ int map_load_factor(map* map) {
 }
 
 uint16_t mask(bucket* bucket, uint8_t h2) {
-    __m128i control_byte_vec = _mm_loadu_si128((const __m128i_u*)bucket->control_bytes);
+    __m128i control_byte_vec = _mm_loadu_si128((const __m128i*)bucket->control_bytes);
 
     __m128i result = _mm_cmpeq_epi8(_mm_set1_epi8(h2), control_byte_vec);
     return _mm_movemask_epi8(result);

@@ -39,15 +39,16 @@ void set_col(FILE* f, char color) {
 
 enum TERM_COLORS {
     RESET = 0,
-    BLACK = 40,
+    BLACK = 30,
     RED, GREEN,
     YELLOW, BLUE,
     MAGENTA, CYAN,
-    WHITE
+    GRAY,
+    WHITE = 97
 };
 
 void set_col(FILE* f, char color) {
-    fprintf(f, "\x1b[%cm", (char)color);
+    fprintf(f, "\x1b[%im", (char)color);
 }
 
 #endif // WINDOWS

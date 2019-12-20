@@ -48,7 +48,7 @@ int type_eq(typedata* from, typedata* to) {
 /// returns 1 if thrown
 int type_eq_throw(frontend* fe, span* s, typedata* from, typedata* to, char* err) {
     if (!type_eq(from, to)) {
-        throw(fe, s, isprintf(err, type_str(from), type_str(to)));
+        throw(isprintf(err, type_str(from), type_str(to)));
         return 1;
     } else {
         return 0;
@@ -58,7 +58,7 @@ int type_eq_throw(frontend* fe, span* s, typedata* from, typedata* to, char* err
 typedef struct svalidator {
     frontend* fe;
     struct svalidator* super;
-    block* b;
+    module* b;
     map locals;
 } validator;
 
@@ -86,7 +86,7 @@ void typeid_type(validator* v, id_type* tid) {
 }
 
 void expr_type(validator* v, expr* e, typedata* td);
-void block_type(validator* super, span* s, block* b, id_type* tid);
+void module_type(validator* super, span* s, module* b, id_type* tid);
 
 /// get type of declaration
 /// non-recursive, memoized
@@ -123,7 +123,7 @@ int stmt_type(validator* v, stmt* s, typedata* td, id_type* ret) {
             break;
         }
         case s_block: //anonymous blocks return from function
-        case s_ret_block: block_type(v, &s->s, s->x, ret); break;
+        case s_ret_block: module_type(v, &s->s, s->x, ret); break;
         case s_expr: expr_type(v, s->x, td); break;
         case s_fn: {
             fn_stmt* fn = s->x;
@@ -134,7 +134,7 @@ int stmt_type(validator* v, stmt* s, typedata* td, id_type* ret) {
                 typeid_type(v, iter.x);
             }
 
-            if (!fn->extern_fn) block_type(v, &s->s, &fn->val, &fn->ty);
+            if (!fn->extern_fn) module_type(v, &s->s, &fn->val, &fn->ty);
             *td = fn->ty.td;
 
             break;
@@ -143,7 +143,7 @@ int stmt_type(validator* v, stmt* s, typedata* td, id_type* ret) {
             bind_stmt* bind = s->x;
             typeid_type(v, &bind->ty);
 
-            block_type(v, &s->s, &bind->val, &bind->ty);
+            module_type(v, &s->s, &bind->val, &bind->ty);
             *td = bind->ty.td;
 
             scope_insert(v->fe, &v->locals, bind->name, s);
@@ -203,12 +203,12 @@ int expr_left(validator* v, expr* e, typedata* td) {
             id_type* tid = e->x;
 
             stmt* decl = find_declaration(v, tid->name);
-            if (!decl) return throw(v->fe, &e->span, "cannot find name in scope");
+            if (!decl) return throw("cannot find name in scope");
 
             if (tid->td.flags) { // transfer flags and set metatype
                 if (td->prim != ty_meta) {
-                    throw(v->fe, &e->span, "name does not reference a type");
-                    note(v->fe, &decl->s, "name defined here");
+                    throw("name does not reference a type");
+                    note(&decl->s, "name defined here");
 
                     return 0;
                 }
@@ -223,13 +223,13 @@ int expr_left(validator* v, expr* e, typedata* td) {
             fn_call* fc = e->x;
             stmt* decl = find_declaration(v, fc->name);
 
-            if (!decl) return throw(v->fe, &e->span, "cannot find function");
+            if (!decl) return throw("cannot find function");
 
             declaration_type(v, decl, td);
 
             if (decl->t != s_fn) {
-                throw(v->fe, &e->span, "does not reference function");
-                note(v->fe, &decl->s, "declared here");
+                throw("does not reference function");
+                note(&decl->s, "declared here");
                 return 0;
             }
 
@@ -242,7 +242,7 @@ int expr_left(validator* v, expr* e, typedata* td) {
 
             while (vector_next(&iter)) {
                 if (!vector_next(&iter2)) {
-                    throw(v->fe, &e->span,
+                    throw(
                           isprintf("not enough arguments: expected %lu, got %lu", fn->args.length, fc->args.length));
                     break;
                 }
@@ -256,12 +256,12 @@ int expr_left(validator* v, expr* e, typedata* td) {
 
                 if (type_eq_throw(v->fe, &arg_expr->span, &arg_expr_type, &arg_ty->td,
                                   "function argument of type %s is not an %s")) {
-                    note(v->fe, &arg_ty->s, "as specified here");
+                    note(&arg_ty->s, "as specified here");
                 }
             }
 
             if (vector_next(&iter2)) {
-                throw(v->fe, &e->span, isprintf("%lu extra argument(s) provided", fc->args.length - fn->args.length));
+                throw(isprintf("%lu extra argument(s) provided", fc->args.length - fn->args.length));
             }
 
             break;
@@ -273,11 +273,11 @@ int expr_left(validator* v, expr* e, typedata* td) {
 
     //quick "type" checks
     if (e->flags & left_num_op && !num_type) {
-        throw(v->fe, &e->span, isprintf("cannot increment/decrement a %s", type_str(td)));
+        throw(isprintf("cannot increment/decrement a %s", type_str(td)));
     }
 
     if (generalize_ptr(td) == ty_uint && e->flags & left_neg) {
-        throw(v->fe, &e->span, "cannot negate an unsigned value");
+        throw("cannot negate an unsigned value");
     }
 
     return 1;
@@ -299,14 +299,14 @@ void expr_type(validator* v, expr* e, typedata* td) {
     }
 }
 
-validator validator_new(validator* super, block* b, frontend* fe) {
+validator validator_new(validator* super, module* b, frontend* fe) {
     validator v = {.b=b, .fe=fe, .locals=map_new(), .super=super};
     map_configure_string_key(&v.locals, sizeof(stmt));
 
     return v;
 }
 
-void block_type(validator* super, span* s, block* b, id_type* tid) {
+void module_type(validator* super, span* s, module* b, id_type* tid) {
     validator v = validator_new(super, b, super->fe);
 
     char returned=0;
@@ -321,8 +321,8 @@ void block_type(validator* super, span* s, block* b, id_type* tid) {
 
         if (x->t == s_ret || x->t == s_ret_block) {
             if (returned) {
-                warn(v.fe, &x->s, "block has already returned by this point");
-                note(v.fe, &ret_span, "returned here");
+                warn("module has already returned by this point");
+                note(&ret_span, "returned here");
             } else {
                 ret_span = x->s;
                 returned = 1;
@@ -337,12 +337,12 @@ void block_type(validator* super, span* s, block* b, id_type* tid) {
     //if there are flags / return type isnt void, then we check if function has been returned
     if (tid->td.flags || tid->td.prim != ty_void) {
         if (!returned) {
-            throw(v.fe, s, "block does not return, even though block has a return type");
+            throw("module does not return, even though module has a return type");
         }
     }
 }
 
-void global_type(validator* super, block* b, frontend* fe) {
+void global_type(validator* super, module* b, frontend* fe) {
     validator v = validator_new(super, b, fe);
 
     vector_iterator iter = vector_iterate(&v.b->stmts);
@@ -352,14 +352,14 @@ void global_type(validator* super, block* b, frontend* fe) {
 
         switch (s->t) {
             case s_ret_block:
-            case s_ret: throw(v.fe, &s->s, "return statements are not allowed in global scope"); break;
+            case s_ret: throw("return statements are not allowed in global scope"); break;
             case s_block:  global_type(&v, s->x, v.fe);
             case s_expr: expr_type(&v, s->x, &td); break;
 
             case s_fn: {
                 fn_stmt* fn = s->x;
                 typeid_type(&v, &fn->ty);
-                if (!fn->extern_fn) block_type(&v, &s->s, &fn->val, &fn->ty);
+                if (!fn->extern_fn) module_type(&v, &s->s, &fn->val, &fn->ty);
 
                 break;
             }
@@ -367,7 +367,7 @@ void global_type(validator* super, block* b, frontend* fe) {
             case s_bind: {
                 bind_stmt* bind = s->x;
                 typeid_type(&v, &bind->ty);
-                block_type(&v, &s->s, &bind->val, &bind->ty);
+                module_type(&v, &s->s, &bind->val, &bind->ty);
 
                 scope_insert(fe, &v.locals, bind->name, s);
 

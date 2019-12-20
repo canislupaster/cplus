@@ -12,125 +12,119 @@ typedef struct {
     char* end;
 } span;
 
-/// statements are expressions, blocks, or bindings that are each distinct, have a span, and have a type
-typedef enum {
-    s_typedef, s_fn,
-    s_block, s_ret_block,
-    s_bind,
-    s_expr, s_ret,
-
-    s_fn_arg, //arguments will be referenced using this "statement"
-} stmt_t;
-
-typedef enum {
-    ty_any, //type used for unresolved stuffs
-    ty_meta, //generalizes meta types
-    ty_int, ty_uint, ty_float, t_ptr, //t_ptr used when generalizing a ptr type
-
-    ty_i8, ty_i16, ty_i32, ty_i64,
-    ty_u8, ty_u16, ty_u32, ty_u64,
-    ty_f8, ty_f16, ty_f32, ty_f64,
-
-    ty_bool, ty_str, ty_char,
-    ty_void, ty_func, ty_compound,
-} prim_type;
-
-typedef enum {
-    ty_f_meta = 0x01, //it would be cleaner to have typedata referenced in the data attribute in meta types, but that is slow and hard
-    ty_const = 0x02, ty_ptr = 0x04, ty_arr = 0x08, ty_inline = 0x10
-} type_flags;
+typedef struct {
+    char* qualifier;
+    char* x;
+} name;
 
 typedef struct {
-    prim_type prim;
+    enum {
+        num_decimal,
+        num_integer,
+    } ty;
 
-    void* data;
+    union {
+        uint64_t uint;
+        int64_t integer;
+        double decimal;
+    };
+} num;
 
-    unsigned long size;
+typedef enum {
+    left_expr,
+    left_for,
+    left_access,
+    left_bind,
+    left_range,
+    left_num,
+    left_str,
+} left_t;
 
-    type_flags flags;
-} typedata;
+typedef enum {
+    //prefix ops
+    left_neg = 0x1,
+    left_add = 0x2
+} left_flags;
 
+/// substituted in reverse
 typedef struct {
-    stmt_t t;
+    vector substitutions; //expression for every substitute indexes
+} substitution;
+
+/// linked list
+typedef struct s_expr {
+    left_t left;
+    left_flags flags;
+
+    span span;
+
+    union {
+        num* num;
+        char* str;
+        struct s_access* access;
+        unsigned long bind;
+        struct s_expr* expr;
+        struct s_for* fore;
+    } val;
+
+    /// the different ways of matching
+    /// unapplied: no identifiers used for substitution
+    /// apply_bind: applier is bound to the name
+    /// applied_bind: appliers' substitutes are bound if the appliers match
+    enum { unapplied, apply_bind, applied } apply;
+    union { name* bind; struct s_id* id; } applier;
+    substitution substitutes;
+} expr;
+
+/// simplified expression form: expressions are parsed and partially* matched by exprs but reduced to simples
+/// * sometimes matching calls for reduction
+typedef struct s_simple {
+    struct s_simple* first;
+
+    enum {
+        simple_add, simple_invert,
+        simple_bind, simple_num, simple_inner
+    } kind;
+
+    union { num* by; unsigned long bind; struct s_simple* inner; } val;
+} simple;
+
+/// identifier or simple (empty vec and map)
+typedef struct s_value {
+    vector substitutes;
+    map substitute_idx;
+
+    simple val;
+} value;
+
+typedef struct s_id {
     span s;
-    void* x;
-} stmt;
+    char* name;
+    value val;
+    span substitutes;
+    unsigned precedence;
+} id;
 
-// ...
-prim_type prim_from_str(char* s) {
-    if (strcmp(s, "i8")==0) return ty_i8;
-    else if (strcmp(s, "i16")==0) return ty_i16;
-    else if (strcmp(s, "i32")==0) return ty_i32;
-    else if (strcmp(s, "i64")==0) return ty_i64;
-    else if (strcmp(s, "u8")==0) return ty_u8;
-    else if (strcmp(s, "u16")==0) return ty_u16;
-    else if (strcmp(s, "u32")==0) return ty_u32;
-    else if (strcmp(s, "u64")==0) return ty_u64;
-    else if (strcmp(s, "f8")==0) return ty_f8;
-    else if (strcmp(s, "f16")==0) return ty_f16;
-    else if (strcmp(s, "f32")==0) return ty_f32;
-    else if (strcmp(s, "f64")==0) return ty_f64;
-    else if (strcmp(s, "bool")==0) return ty_bool;
-    else if (strcmp(s, "str")==0) return ty_str;
-    else if (strcmp(s, "char")==0) return ty_char;
-    else if (strcmp(s, "void")==0) return ty_void;
-    else return ty_compound;
-}
+typedef struct s_for {
+    expr i;
+    char* name;
+    expr base;
 
+    expr x;
 
-char* prim_str(typedata* td) {
-    //type is compound and is resolved
-    if (td->prim == ty_compound) {
-        if (!td->data) return "(unresolved type)";
-        return NULL; //TODO: typedefs
-    } else {
-        switch (td->prim) {
-            case ty_int: return "(int)";
-            case ty_uint: return "(uint)";
-            case ty_float: return "(float)";
-            case t_ptr: return "(ptr)";
-            case ty_any: return "(any)";
-            case ty_void: return "void";
-            case ty_meta: return "type";
-            case ty_i8: return "i8";
-            case ty_i16: return "i16";
-            case ty_i32: return "i32";
-            case ty_i64: return "i64";
-            case ty_u8: return "u8";
-            case ty_u16: return "u16";
-            case ty_u32: return "u32";
-            case ty_u64: return "u64";
-            case ty_f8: return "f8";
-            case ty_f16: return "f16";
-            case ty_f32: return "f32";
-            case ty_f64: return "f64";
-            case ty_bool: return "bool";
-            case ty_str: return "str";
-            case ty_char: return "char";
-            case ty_func: return "func";
-        }
-    }
-}
+    char boolean;
+    value gradient;
+} for_expr;
 
-char* type_str(typedata* td) {
-    char* const_str = "";
-    //only use const if ptr, otherwise having const is insignificant
-    if (td->flags & ty_const && td->flags & ty_ptr) const_str = "const ";
-
-    char* ptr_str = "";
-    if (td->flags & ty_ptr) ptr_str = "*";
-
-    char* arr_str = "";
-    if (td->flags & ty_arr) asprintf(&arr_str, "[%lu]", td->size);
-
-    return isprintf("%s%s%s%s", const_str, prim_str(td), ptr_str, arr_str);
-}
+//identifier, substitute, for, or id: anything named
+typedef struct s_access {
+    enum { a_id, a_for, a_sub, a_unbound } res;
+    union { id* id; for_expr* fore; unsigned long idx; } val;
+} access;
 
 typedef struct {
-    vector stmts;
-    /// map of all declarations <-> statement pointers inside scope for validation
-    map declarations;
-} block;
+    map ids;
+} module;
 
 typedef struct {
     char* file;
@@ -139,13 +133,26 @@ typedef struct {
 
     vector tokens;
 
-    block global;
+    module global;
 
     /// tells whether to continue into codegen
     char errored;
 } frontend;
 
+frontend* FRONTEND; //global frontend
+
 const span SPAN_NULL = {.start=NULL};
+
+uint64_t hash_name(name* x) {
+    uint64_t qhash = x->qualifier ? hash_string(&x->qualifier) : 0;
+    uint64_t nhash = hash_string(&x->x);
+    
+    return qhash + nhash;
+}
+
+int compare_name(name* x1, name* x2) {
+    return !(strcmp(x1->qualifier, x2->qualifier)==0 && strcmp(x1->x, x2->x)==0);
+}
 
 ///upper bound exclusive, returns 1 if equal
 int spaneq(span s, char* x) {
@@ -166,8 +173,10 @@ unsigned long spanlen(span* s) {
     return s->end-s->start;
 }
 
+void* heap(size_t size);
+
 char* spanstr(span* s) {
-    char* v = malloc(spanlen(s) + 1);
+    char* v = heap(spanlen(s) + 1);
 
     memcpy(v, s->start, spanlen(s));
     v[spanlen(s)] = 0; //set terminator
@@ -175,7 +184,7 @@ char* spanstr(span* s) {
     return v;
 }
 
-void msg(frontend* fe, span* s, char color1, char color2, const char* template_empty, const char* template, const char* msg) {
+void msg(frontend* fe, const span* s, char color1, char color2, const char* template_empty, const char* template, const char* msg) {
     if (s->start == NULL) {
         set_col(stderr, color1);
         fprintf(stderr, template_empty, fe->file);
@@ -236,7 +245,7 @@ void msg(frontend* fe, span* s, char color1, char color2, const char* template_e
 
     //write lines
     for (unsigned long i=0; i<lines.length; i++) {
-        char* line_num = malloc(digits+1);
+        char* line_num = heap(digits+1);
         line_num[digits] = 0;
 
         int l_digits = (int)log10(line+i)+1;
@@ -259,7 +268,7 @@ void msg(frontend* fe, span* s, char color1, char color2, const char* template_e
         if ((s->end > x->start)
             && (s->start >= x->start && s->end <= x->end)) {
             //highlight end - line start
-            char* buf = malloc((s->end - x->start) + 1);
+            char* buf = heap((s->end - x->start) + 1);
             buf[s->end-x->start] = 0;
 
             //fill before-highlight with whitespace
@@ -281,67 +290,63 @@ void msg(frontend* fe, span* s, char color1, char color2, const char* template_e
 }
 
 ///always returns zero for convenience
-int throw(frontend* fe, span* s, const char* x) {
-    fe->errored=1;
-    msg(fe, s, RED, WHITE, "error in %s", "error at %s:%lu:%lu: ", x);
+int throw(const span* s, const char* x) {
+    FRONTEND->errored=1;
+    msg(FRONTEND, s, RED, WHITE, "error in %s", "error at %s:%lu:%lu: ", x);
     return 0;
 }
 
-void warn(frontend* fe, span* s, const char* x) {
-    msg(fe, s, YELLOW, WHITE, "warning in %s", "warning at %s:%lu:%lu: ", x);
+void warn(const span* s, const char* x) {
+    msg(FRONTEND, s, YELLOW, WHITE, "warning in %s", "warning at %s:%lu:%lu: ", x);
 }
 
-void note(frontend* fe, span* s, const char* x) {
-    msg(fe, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
+void note(const span* s, const char* x) {
+    msg(FRONTEND, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
 }
 
-void scope_insert(frontend* fe, map* scope, char* name, stmt* s) {
-    stmt* x = map_find(scope, &name);
-    if (x) {
-        throw(fe, &s->s, "name already used");
-        note(fe, &x->s, "declared here");
+void* heap(size_t size) {
+    void* res = malloc(size);
+
+    if (!res) {
+        throw(&SPAN_NULL, "out of memory!");
+        exit(1);
     }
-    //still inserted idk why
-    map_insertcpy(scope, &name, s);
+
+    return res;
 }
 
-typedef struct {
-    enum {
-        num_decimal,
-        num_integer,
-        num_unsigned
-    } ty;
-
-    union {
-        uint64_t uint;
-        int64_t integer;
-        double decimal;
-    };
-} num;
+void* heapcpy(size_t size, const void* val) {
+    void* res = heap(size);
+    memcpy(res, val, size);
+    return res;
+}
 
 void print_num(num* n) {
     switch (n->ty) {
         case num_decimal: printf("%f", n->decimal); break;
         case num_integer: printf("%lli", n->integer); break;
-        case num_unsigned: printf("%llu", n->uint); break;
     }
 }
 
 typedef enum {
-    t_lparen, t_rparen, t_lbrace, t_rbrace, t_lidx, t_ridx,
-    t_id, t_const, t_inline, t_return, t_if, t_else,
-    t_mul, t_ref, t_num, t_comma, t_sep, t_set,
-    t_char, t_str,
-    t_add, t_sub, t_div, t_mod,
-    t_incr, t_decr,
-    t_not, t_lt, t_gt, t_le, t_ge, t_eq,
-    t_eof
+    t_name, t_non_bind,
+    t_add, t_sub,
+    t_ellipsis, t_comma,
+    t_in, t_for,
+    t_eq, t_paren,
+    t_str, t_num,
+    t_sync, t_eof
 } token_type;
 
 typedef struct {
     token_type tt;
     span s;
-    void* val;
+
+    union {
+        name* name;
+        char* str;
+        num* num;
+    } val;
 } token;
 
 typedef struct {
@@ -364,7 +369,7 @@ int lex_next(lexer* l) {
     }
 }
 
-char lex_back(lexer* l) {
+void lex_back(lexer* l) {
     l->pos.end--;
 }
 
@@ -389,226 +394,215 @@ int lex_next_eq(lexer* l, char x) {
 }
 
 /// utility fn
-void token_push(lexer* l, token_type tt) {
+token* token_push(lexer* l, token_type tt) {
     token* t = vector_push(&l->fe->tokens);
-    t->tt=tt; t->s=l->pos; t->val=NULL;
+    t->tt=tt; t->s=l->pos;
+    return t;
 }
 
-void token_push_val(lexer* l, token_type tt, void* val, size_t size) {
-    void* heap_val = malloc(size);
-    memcpy(heap_val, val, size);
+const char* RESERVED = " \n\r/(),+-=\"+-";
+name ADD_NAME = {.qualifier=NULL, .x="+"};
+name SUB_NAME = {.qualifier=NULL, .x="-"};
 
-    token* t = vector_push(&l->fe->tokens);
-    t->tt=tt; t->s=l->pos; t->val=heap_val;
+void lex_name(lexer* l) {
+    name n;
+    n.qualifier = NULL;
+
+    while ((l->x = lex_peek(l)) && strchr(RESERVED, l->x)==NULL) {
+        if (l->x == '.') {
+            n.qualifier = spanstr(&l->pos);
+            lex_mark(l);
+        }
+
+        lex_next(l);
+    }
+
+    if (!n.qualifier && spaneq(l->pos, "for")) {
+        token_push(l, t_for);
+    } else {
+        if (spanlen(&l->pos) == 0) {
+            throw(&l->pos, "name required after qualifier");
+
+            n.x = n.qualifier;
+            n.qualifier = NULL;
+        } else {
+            n.x = spanstr(&l->pos);
+        }
+
+        token_push(l, t_name)->val.name = heapcpy(sizeof(name), &n);
+    }
 }
 
-void lex(frontend* fe) {
-    lexer l;
-    l.fe = fe;
-    l.pos.start = l.fe->s.start;
-    l.pos.end = l.pos.start;
+int lex_char(lexer* l) {
+    if (!lex_next(l)) {
+        token_push(l, t_eof); //push eof token
+        return 0;
+    }
 
-    while (lex_next(&l)) {
-        lex_mark(&l);
+    lex_mark(l);
 
-        switch (l.x) {
-            case ' ': break; //skip whitespace
-            case '\n': break; //skip newlines
-            case '\r': break; //skip cr(lf)
-            case '/': { //consume comments
-                if (lex_peek(&l) == '/') {
-                    lex_next(&l);
-                    while (lex_next(&l) && l.x != '\n');
-                } else if (lex_peek(&l) == '*') {
-                    lex_next(&l);
-                    while (lex_next(&l) && (l.x != '*' || lex_peek(&l) != '/'));
-                } else {
-                    token_push(&l, t_div);
-                }
-
+    switch (l->x) {
+        case ' ': break; //skip whitespace
+        case '\n': {
+            if (lex_peek(l) != ' ' && lex_peek(l) != '\t') token_push(l, t_sync);
+            break; //newlines are synchronization tokens
+        }
+        case '\r': break; //skip cr(lf)
+        case '/': { //consume comments
+            if (lex_peek(l) == '/') {
+                lex_next(l);
+                while (lex_next(l) && l->x != '\n');
+                
                 break;
+            } else if (lex_peek(l) == '*') {
+                lex_next(l);
+                while (lex_next(l) && (l->x != '*' || lex_peek(l) != '/'));
+                
+                break;
+            } else {
+                lex_name(l); break;
+            }
+        }
+
+        case '.': {
+            if (lex_next_eq(l, '.') && lex_next_eq(l, '.')) { //try consume two more dots
+                token_push(l, t_ellipsis);
+                break;
+            } else {
+                lex_name(l); break;
+            }
+        }
+
+        case '(': {
+            token* lparen = token_push(l, t_paren);
+            
+            while (!lex_next_eq(l, ')')) {
+                if (!lex_char(l)) {
+                    throw(&l->pos, "expected matching parenthesis");
+                    note(&lparen->s, "other parenthesis here");
+                    break;
+                }
             }
 
-            case '(':
-                token_push(&l, t_lparen); break;
-            case ')':
-                token_push(&l, t_rparen); break;
-            case '{':
-                token_push(&l, t_lbrace); break;
-            case '}':
-                token_push(&l, t_rbrace); break;
-            case '[':
-                token_push(&l, t_lidx); break;
-            case ']':
-                token_push(&l, t_ridx); break;
+            token_push(l, t_paren);
+            break;
+        }
 
-            case '&':
-                token_push(&l, t_ref); break;
-            case ',':
-                token_push(&l, t_comma); break;
-            case ';':
-                token_push(&l, t_sep); break;
-            case '!':
-                token_push(&l, t_not); break;
+        case ',':
+            token_push(l, t_comma); break;
 
-            case '+':
-                if (lex_next_eq(&l, '+')) token_push(&l, t_incr);
-                else token_push(&l, t_add); break;
-            case '-':
-                if (lex_next_eq(&l, '+')) token_push(&l, t_decr);
-                else token_push(&l, t_sub); break;
-            case '*':
-                token_push(&l, t_mul); break;
-            case '%':
-                token_push(&l, t_mod); break;
+        case '+': token_push(l, t_add)->val.name = &ADD_NAME; break;
+        case '-': token_push(l, t_sub)->val.name = &SUB_NAME; break;
+        case '=': token_push(l, t_eq); break;
 
-            case '>': if (lex_next_eq(&l, '=')) token_push(&l, t_ge); else token_push(&l, t_gt); break;
-            case '<': if (lex_next_eq(&l, '=')) token_push(&l, t_le); else token_push(&l, t_lt); break;
-            case '=': if (lex_next_eq(&l, '=')) token_push(&l, t_eq); else token_push(&l, t_set); break;
+        //parse string
+        case '\"': {
+            span str_data = {.start=l->pos.end};
+            char escaped=0;
 
-            //parse character
-            case '\'': {
-                if (lex_next(&l) && l.x == '\\' && lex_next(&l)) { //parse escaped
-                    token_push_val(&l, t_char, &l.x, sizeof(char));
-                } else { //parse unescaped
-                    if (!lex_next(&l) || l.x == '\'') {
-                        throw(fe, &l.pos, "expected character for character literal");
-                        break;
-                    }
-
-                    token_push_val(&l, t_char, &l.x, sizeof(char));
-                }
-
-                if (lex_next(&l) && l.x != '\'') {
-                    throw(fe, &l.pos, "expected end-quote after character");
-                    lex_back(&l);
+            while (1) {
+                if (!lex_next(l)) {
+                    str_data.end = l->pos.end;
+                    throw(&l->pos, "expected end of string");
                     break;
                 }
 
-                break;
-            }
-
-            //parse string
-            case '\"': {
-                span str_data = {.start=l.pos.end};
-                char escaped=0;
-
-                while (1) {
-                    if (!lex_next(&l)) {
-                        str_data.end = l.pos.end;
-                        throw(fe, &l.pos, "expected end of string");
-                        break;
-                    }
-
-                    if (l.x == '\"' && !escaped) {
-                        str_data.end = l.pos.end;
-                        break;
-                    }
-
-                    if (l.x == '\\' && !escaped) {
-                        escaped=1;
-                    } else {
-                        escaped=0;
-                    }
+                if (l->x == '\"' && !escaped) {
+                    str_data.end = l->pos.end;
+                    break;
                 }
 
-                token_push_val(&l, t_str, spanstr(&str_data), spanlen(&str_data) + 1);
-                break;
-            }
-
-            case '.':
-            case '0' ... '9': {
-                num num;
-
-                unsigned long decimal_place=0;
-                num.ty = num_integer;
-                num.uint = 0;
-
-                do {
-                    if (l.x >= '0' && l.x <= '9') {
-                        int val = l.x - '0';
-                        //modify decimal or uint
-                        if (num.ty == num_decimal) {
-                            num.decimal += (double)val / (10^decimal_place);
-                        } else {
-                            uint64_t old_val = num.uint;
-
-                            num.uint *= 10;
-                            num.uint += val;
-
-                            if (num.uint < old_val) {
-                                throw(fe, &l.pos, "integer overflow");
-                                break;
-                            }
-                        }
-                        //increment num_decimal place
-                        decimal_place++;
-                    } else if (l.x == '.') {
-                        if (num.ty == num_decimal) { // already marked decimal
-                            throw(fe, &l.pos, "decimal numbers cannot have multiple dots");
-                            break;
-                        }
-
-                        num.ty = num_decimal;
-                        num.decimal = (double)num.uint;
-                        decimal_place = 0;
-                    } else if (l.x == 'u') {
-                        if (num.ty == num_decimal) {
-                            throw(fe, &l.pos, "decimal numbers cannot be marked unsigned");
-                            break;
-                        }
-
-                        num.ty = num_unsigned;
-                    } else {
-                        lex_back(&l); //undo consuming non-number char
-                        break;
-                    }
-                } while(lex_next(&l));
-
-                if (num.ty == num_integer) {
-                    //convert uint to integer
-                    num.integer = (int64_t)num.uint;
-
-                    if ((uint64_t)num.integer < num.uint) {
-                        throw(fe, &l.pos, "integer overflow");
-                    }
+                if (l->x == '\\' && !escaped) {
+                    escaped=1;
+                } else {
+                    escaped=0;
                 }
-
-                token_push_val(&l, t_num, &num, sizeof(num));
-                break;
             }
 
-            case 'a' ... 'z':
-            case 'A' ... 'Z': {
-                while ((l.x = lex_peek(&l)) &&
-                       ((l.x >= 'a' && l.x <= 'z') || (l.x >= '0' && l.x <= '9') || (l.x == '_')) &&
-                       lex_next(&l));
-
-                char* s = spanstr(&l.pos);
-                if (strcmp(s, "return")==0) token_push(&l, t_return);
-                else if (strcmp(s, "if")==0) token_push(&l, t_if);
-                else if (strcmp(s, "else")==0) token_push(&l, t_else);
-                else if (strcmp(s, "const")==0) token_push(&l, t_const);
-                else if (strcmp(s, "inline")==0) token_push(&l, t_inline);
-                else token_push_val(&l, t_id, spanstr(&l.pos), spanlen(&l.pos) + 1);
-
-                break;
-            }
-
-            default: throw(l.fe, &l.pos, "unrecognized token");
+            token_push(l, t_str)->val.str = spanstr(&str_data);
+            break;
         }
+
+        case '0' ... '9': {
+            num number;
+
+            unsigned long decimal_place=0;
+            number.ty = num_integer;
+            number.uint = 0;
+
+            do {
+                if (l->x >= '0' && l->x <= '9') {
+                    int val = l->x - '0';
+                    //modify decimal or uint
+                    if (number.ty == num_decimal) {
+                        number.decimal += (double)val / (10^decimal_place);
+                    } else {
+                        uint64_t old_val = number.uint;
+
+                        number.uint *= 10;
+                        number.uint += val;
+
+                        if (number.uint < old_val) {
+                            throw(&l->pos, "integer overflow");
+                            break;
+                        }
+                    }
+                    //increment num_decimal place
+                    decimal_place++;
+                } else if (l->x == '.') {
+                    if (number.ty == num_decimal) { // already marked decimal
+                        throw(&l->pos, "decimal numbers cannot have multiple dots");
+                        break;
+                    }
+
+                    number.ty = num_decimal;
+                    number.decimal = (double)number.uint;
+                    decimal_place = 0;
+                } else {
+                    lex_back(l); //undo consuming non-number char
+                    break;
+                }
+            } while(lex_next(l));
+
+            if (number.ty == num_integer) {
+                //convert uint to integer
+                number.integer = (int64_t)number.uint;
+
+                if ((uint64_t)number.integer < number.uint) {
+                    throw(&l->pos, "integer overflow");
+                }
+            }
+
+            token_push(l, t_num)->val.num = heapcpy(sizeof(num), &number);
+
+            break;
+        }
+
+        default: lex_name(l);
     }
 
-    token_push(&l, t_eof); //push eof token
+    return 1;
+}
+
+void lex(frontend* fe) {
+    lexer l = {.fe=fe, .pos={.start=fe->s.start, .end=fe->s.start}};
+    while (lex_char(&l));
 }
 
 void token_free(token* t) {
     switch (t->tt) {
-        case t_id: free(t->val);
-        case t_num: free(t->val);
+        case t_name: {
+            if (t->val.name->qualifier) free(t->val.name->qualifier);
+            free(t->val.name->x);
+        }
+        case t_num: free(t->val.num); break;
 
         default:;
     }
+}
+
+int is_name(token* x) {
+    return x->tt == t_name || x->tt == t_add || x->tt == t_sub;
 }
 
 ///initialize frontend with file
@@ -619,7 +613,7 @@ int read_file(frontend* fe, char* filename) {
     fseek(f, 0, SEEK_END);
     //allocate length of string
     unsigned long len = ftell(f);
-    char* str = malloc(len+1);
+    char* str = heap(len+1);
     str[len] = 0;
     //back to beginning
     rewind(f);
@@ -637,13 +631,58 @@ int read_file(frontend* fe, char* filename) {
 
 frontend make_frontend(char* file) {
     frontend fe = {.tokens=vector_new(sizeof(token))};
+    FRONTEND = &fe;
 
     read_file(&fe, file);
 
     return fe;
 }
 
+void expr_free(expr* e) {
+    switch (e->left) {
+        case left_expr: {
+            expr_free(e->val.expr);
+            free(e->val.expr);
+            break;
+        }
+        case left_for: {
+            expr_free(&e->val.fore->base);
+            expr_free(&e->val.fore->i);
+            expr_free(&e->val.fore->x);
+        }
+        default:;
+    }
+
+    vector_iterator iter = vector_iterate(&e->substitutes);
+    while (vector_next(&iter)) {
+        expr_free(iter.x);
+    }
+
+    vector_free(&e->substitutes);
+}
+
+void value_free(value* val) {
+    vector_free(&val->substitutes);
+    map_free(&val->substitute_idx);
+    expr_free(val->val);
+}
+
+void id_free(id* xid) {
+    value_free(&xid->val);
+}
+
+void module_free(module* b) {
+    map_iterator iter = map_iterate(&b->ids);
+    while (map_next(&iter)) {
+        id_free(*(id**)iter.x);
+    }
+
+    map_free(&b->ids);
+}
+
 void frontend_free(frontend* fe) {
+    module_free(&fe->global);
+
     free(fe->s.start);
 
     vector_iterator i = vector_iterate(&fe->tokens);

@@ -2,7 +2,7 @@
 
 void inline_expr(frontend* fe, expr* e) {
     if (e->left & left_ref) {
-        throw(fe, &e->left_span, "cannot inline reference");
+        throw("cannot inline reference");
     } else if (e->left & left_num) {
 
     }

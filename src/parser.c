@@ -2,21 +2,23 @@
 
 typedef struct {
     frontend* fe;
-    token x;
+    token current;
 
     unsigned long pos;
 
-    block* current;
+    module* mod;
+    map* substitute_idx;
+    vector reducers;
 } parser;
 
 int throw_here(parser* p, const char* x) {
-    throw(p->fe, &p->x.s, x);
+    return throw(&p->current.s, x);
 }
 
 /// doesn't return null
 void parse_next(parser* p) {
-    p->x = *(token*)vector_get(&p->fe->tokens, p->pos);
-    if (p->x.tt != t_eof) p->pos++;
+    p->current = *(token*)vector_get(&p->fe->tokens, p->pos);
+    if (p->current.tt != t_eof) p->pos++;
 }
 
 /// doesn't return null
@@ -24,741 +26,652 @@ token* parse_peek(parser* p) {
     return vector_get(&p->fe->tokens, p->pos);
 }
 
+token_type parse_peek_x(parser* p, int x) {
+    token* t = vector_get(&p->fe->tokens, p->pos+x-1);
+    return t ? t->tt : t_eof;
+}
+
 /// returns 0 if not matched, otherwise sets p.x
 int parse_next_eq(parser* p, token_type tt) {
     token* t = parse_peek(p);
     if (t->tt == tt) {
         p->pos++;
-        p->x = *t;
+        p->current = *t;
         return 1;
     } else {
         return 0;
     }
 }
 
-//for debugging convenience
 int separator(parser* p) {
     token* t = parse_peek(p);
-    return t->tt==t_sep || t->tt == t_comma || t->tt==t_rbrace || t->tt==t_rparen || t->tt==t_ridx;
+    return t->tt == t_eof || t->tt==t_sync;
 }
 
 void synchronize(parser* p) {
-    do parse_next(p); while (!separator(p));
+    while (!separator(p)) parse_next(p);
 }
 
-typedef enum {
-    op_none,
-    op_sub, op_add, op_mul, op_div, op_idx,
-    op_set, op_cast
-} op;
+int parse_expr(parser* p, expr* x_expr, int bind, unsigned op_prec); //forward decl
 
-typedef enum {
-    left_access,
-    left_call,
+void parse_detach(expr* x_expr) {
+    expr* detached = heapcpy(sizeof(expr), x_expr);
 
-    left_num,
-    left_char,
-    left_str,
+    x_expr->left.kind = left_expr;
+    x_expr->left.val.expr = detached;
+}
 
-    left_expr
-} left;
+void module_init(module* b) {
+    b->ids = map_new();
+    map_configure_string_key(&b->ids, sizeof(id*));
+}
+//
+//value value_new(expr* e) {
+//    value v = {.substitutes=vector_new(sizeof(expr)), .val=e}; //TODO: REDUCTION
+//    return v;
+//}
+//
+//value from_left(expr* e) {
+//    value v = value_new(e);
+//    return v;
+//}
+//
+//int resolve_i(expr* i) {
+//
+//}
+//
+// //FIRST: number from i and derivative from current
+// int resolve_for(for_expr* fore) {
+//
+// }
+//
+//int value_eq(parser* p, value* x1, value* x2) {
+//    if (x1->substitutes.length != x2->substitutes.length) return 0;
+//    vector_iterator iter = vector_iterate(&x1->substitutes);
+//
+//    while (vector_next(&iter)) {
+//        if (!expr_eq(iter.current, vector_get(&x2->substitutes, iter.i-1))) return 0;
+//    }
+//}
 
-typedef enum {
-    //prefix ops
-    left_neg = 0x1,
-    left_ref = 0x2,
-    left_cast = 0x4,
-    //prefix incr/decr: ++x
-    left_incr = 0x8,
-    left_decr = 0x10,
-    //affix ops: x++
-    left_incr_after = 0x20,
-    left_decr_after = 0x40,
-} left_flags;
+int expr_eq(value* v1, value* v2, expr* e1, expr* e2, int nocompare);
 
-const int left_num_op = left_incr | left_incr_after | left_decr | left_decr_after | left_neg;
+int fore_eq(for_expr* fore1, for_expr* fore2, int nocompare) {
+    return expr_eq(NULL, NULL, &fore1->i, &fore2->i, nocompare)
+            && expr_eq(NULL, NULL, &fore1->base, &fore2->base, nocompare)
+            && expr_eq(NULL, NULL, &fore1->x, &fore2->x, nocompare + 1);
+}
 
-/// linked list
-typedef struct s_expr {
-    op op;
-    /// assign after op
-    char assign;
+int id_eq(id* id1, id* id2, int nocompare) {
+    if (id1 == id2) return 1;
 
-    left left;
-    left_flags flags;
+    if (id1->val.substitutes.length != id2->val.substitutes.length) return 0;
 
-    span span;
-    void* x;
-    //always expr
-    struct s_expr* right;
-} expr;
+    vector_iterator iter = vector_iterate(&id1->val.substitutes);
+    vector_iterator iter2 = vector_iterate(&id2->val.substitutes);
 
-typedef struct {
-    id_type ty;
-    char* name;
-    char uninitialized;
-    block val;
-} bind_stmt;
-
-typedef enum {
-    fn_arg_restrict = 0x01
-} fn_arg_flags;
-
-typedef struct {
-    id_type ty;
-    char* name;
-    fn_arg_flags flags;
-} fn_arg;
-
-typedef struct {
-    id_type ty;
-    /// vector of fn_args
-    vector args;
-    char* name;
-
-    char extern_fn;
-    block val;
-} fn_stmt;
-
-typedef struct {
-    fn_stmt* target;
-    char* name;
-    /// vector of expr
-    vector args;
-} fn_call;
-
-int try_parse_expr(parser* p, expr* x_expr, unsigned op_prec); //forward decl
-
-expr* try_parse_new_expr(parser* p) {
-    expr* e = malloc(sizeof(expr));
-    if (!try_parse_expr(p, e, 0)) {
-        free(e);
-        return NULL;
+    while (vector_next(&iter)) {
+        vector_next(&iter2);
+        if (!expr_eq(&id1->val, &id2->val, iter.x, iter2.x, nocompare))
+            return 0;
     }
 
-    return e;
+    return expr_eq(NULL, NULL, id1->val.val, id2->val.val, nocompare);
 }
 
-expr* parse_idx(parser* p) {
-    if (parse_next_eq(p, t_lidx)) {
-        span* l_idx = &p->x.s; //record starting bracket
+int applied_eq(expr* e1, expr* e2, int nocompare) {
 
-        expr* i_expr = try_parse_new_expr(p);
-        if (!i_expr) {
-            throw_here(p, "expected index");
-            return NULL;
+}
+
+int expr_eq(value* v1, value* v2, expr* e1, expr* e2, int nocompare) {
+    if (e1 == e2) return 1;
+    if (e1->left!=e2->left || e1->flags!=e2->flags || e1->substitutes.length != e2->substitutes.length) return 0;
+
+    switch (e1->left) {
+        case left_str: return strcmp(e1->val.str, e2->val.str) == 0;
+        case left_num: return e1->val.num->ty == e2->val.num->ty && e1->val.num->uint == e2->val.num->uint;
+        case left_expr: return expr_eq(NULL, NULL, e1, e2, nocompare);
+        case left_for: return fore_eq(e1->val.fore, e2->val.fore, nocompare - 1);
+        case left_access: {
+            if (e1->val.access->res != e2->val.access->res) return 0;
+
+            switch (e1->val.access->res) {
+                case a_unbound: return 1;
+                case a_id: return id_eq(e1->val.access->val.id, e2->val.access->val.id, nocompare);
+                case a_for: {
+                    if (!nocompare) return fore_eq(e1->val.access->val.fore, e1->val.access->val.fore, nocompare + 1);
+                }
+                case a_sub: {
+                    return e1->val.access->val.idx == e2->val.access->val.idx;
+                }
+            }
         }
-
-        if (!parse_next_eq(p, t_ridx)) {
-            throw_here(p, "expected right bracket to end index");
-            note(p->fe, l_idx, "other bracket here");
+        case left_bind: {
+            // compare if both substitute positions are equal
+            return e1->val.bind == e2->val.bind;
         }
+    }
+}
 
-        return i_expr;
+int bind(substitution* s, expr* be, expr* e) {
+    if (e->flags!=be->flags) return 0;
+    if (be->apply != unapplied) {
+        if (e->apply == unapplied) return 0;
+        if (be->apply == apply_bind) {
+            vector_pushcpy(&s->substitutions, &e->applier.id->val);
+        } else if (be->apply == applied) {
+            if (!id_eq(e->applier.id, be->applier.id) && !expr_eq()) return 0;
+
+            vector_iterator biter = vector_iterate(&be->substitutes);
+            vector_iterator eiter = vector_iterate(&e->substitutes);
+
+            while (vector_next(&biter) && vector_next(&eiter)) {
+                if (!bind(s, biter.x, eiter.x)) return 0;
+            }
+        }
+    }
+
+    if (be->left == left_bind) {
+        value left = from_left(e);
+        vector_pushcpy(&s->substitutions, &left);
+
+        return 1;
     } else {
-        return NULL;
+        if (e->left!=be->left) return 0;
+        switch (e->left) {
+            case left_expr: return bind(s, be->val.expr, e->val.expr);
+            default: return expr_eq(NULL, NULL, e, be, 0);
+        }
     }
 }
 
-int parse_length(parser* p, unsigned long* x) {
-    if (parse_next_eq(p, t_lidx)) {
-        span* l_idx = &p->x.s; //record starting bracket
-
-        if (parse_next_eq(p, t_num)) {
-            num* n = p->x.val;
-            if (n->ty != num_integer) return throw_here(p, "expected integer");
-            *x = n->uint;
+void commute(num* num1, num* num2) {
+    if (num1->ty != num2->ty) { //ensure same precision, assume two's complement
+        if (num1->ty == num_decimal) {
+            num2->ty = num_decimal;
+            num2->decimal = (double) num2->uint;
+        } else if (num2->ty == num_decimal) {
+            num1->ty = num_decimal;
+            num1->decimal = (double) num1->uint;
         }
+    }
+}
 
-        if (!parse_next_eq(p, t_ridx)) {
-            throw_here(p, "expected right bracket to end length");
-            note(p->fe, l_idx, "other bracket here");
+num ZERO = {.ty = num_integer, .integer = 0};
+num ONE = {.ty = num_integer, .integer = 1};
+
+num mul(num num1, num num2) {
+    commute(&num1, &num2);
+
+    num res = {.ty = num1.ty};
+    if (num1.ty == num_decimal) {
+        res.decimal = num1.decimal * num2.decimal;
+    } else {
+        res.uint = num1.uint * num2.uint;
+    }
+
+    return res;
+}
+
+num add(num num1, num num2) {
+    commute(&num1, &num2);
+
+    num res = {.ty = num1.ty};
+    if (num1.ty == num_decimal) {
+        res.decimal = num1.decimal + num2.decimal;
+    } else {
+        res.uint = num1.uint + num2.uint;
+    }
+
+    return res;
+}
+
+typedef struct {
+
+};
+
+const simple SIMPLE_ONE = {.kind=simple_num, .val = {.by = &ONE}};
+const simple SIMPLE_ZERO = {.kind=simple_num, .val = {.by = &ZERO}};
+
+//TODO: fix mem leaks hehe
+simple* gradient(simple* step, unsigned long x) {
+    switch (step->kind) {
+        //cancel constant operations
+        case simple_invert:
+        case simple_add: {
+            return step->first ? gradient(step->first, x) : heapcpy(sizeof(simple), &SIMPLE_ZERO);
         }
+        case simple_bind: {
+            if (step->val.bind == x) {
+                return step->first ? step->first : heapcpy(sizeof(simple), &SIMPLE_ONE);
+            }
+        }
+        //keep forms of multiplication
+        default: {
+            simple* res = heap(sizeof(simple));
+            *res = *step;
+            res->first = gradient(step->first, x);
 
+            return res;
+        }
+    }
+}
+
+int substitute(simple* exp, substitution* sub) {
+    if (exp->first) substitute(exp->first, sub);
+
+    if (exp->kind == simple_bind) {
+        exp->kind = simple_inner;
+        exp->val.inner = *(simple**)vector_get(&sub->substitutions, sub->substitutions.length);
+        vector_pop(&sub->substitutions);
+    } else if (exp->kind == simple_inner) {
+        substitute(exp->val.inner, sub);
+    }
+}
+
+void reduce(expr* e, simple* s) {
+    if (e->apply == applied) {
+        substitute(&e->applier.id->val.val, &e->substitutes);
+    }
+
+    switch (e->left) {
+        case left_for: {
+            s->first = gradient(reduce(e->val.fore->x));
+
+            s->kind = simple_num;
+            s->val.by
+        }
+    }
+}
+
+int try_parse_name(parser* p) {
+    token* x = parse_peek(p);
+    if (is_name(x)) {
+        parse_next(p);
         return 1;
     } else {
         return 0;
     }
 }
 
-/// parse anything that can be a type attribution, to be resolved later
-int parse_id_type(parser* p, id_type* tid) {
-    tid->resolved = 0;
-    tid->td.flags = 0;
+int try_parse_unqualified(parser* p) {
+    token* x = parse_peek(p);
+    if (is_name(x) && !x->val.name->qualifier) {
+        parse_next(p); return 1;
+    } else {
+        return 0;
+    }
+}
 
-    tid->s.start = parse_peek(p)->s.start;
+int parse_id(parser* p) {
+    id xid;
+    xid.s.start = parse_peek(p)->s.start;
 
-    if (parse_next_eq(p, t_const)) tid->td.flags |= ty_const;
-    if (!parse_next_eq(p, t_id)) return 0;
+    //reset reducers
+    p->reducers = vector_new(sizeof(for_expr*));
 
-    tid->name = p->x.val;
+    xid.val.substitutes = vector_new(sizeof(expr));
+    xid.val.substitute_idx = map_new();
 
-    if (parse_length(p, &tid->td.size)) //try parse array size
-        tid->td.flags |= ty_arr;
+    //maps binds name to index for unbiased comparison of ids
+    map_configure_string_key(&xid.val.substitute_idx, sizeof(unsigned long));
 
-    if (parse_next_eq(p, t_mul))
-        tid->td.flags |= ty_ptr;
+    p->substitute_idx = &xid.val.substitute_idx;
 
-    tid->s.end = p->x.s.end;
+    //start parsing substitutes
+    xid.substitutes.start = parse_peek(p)->s.start;
 
+    if (parse_peek_x(p, 2) != t_eq) {
+        expr e;
+        if (parse_expr(p, &e, 1, 1)) {
+            vector_pushcpy(&xid.val.substitutes, &e);
+        } else {
+            return throw_here(p, "expected substitute");
+        }
+    }
+    
+    if (try_parse_unqualified(p)) {
+        xid.name = p->current.val.name->x;
+    } else {
+        return throw_here(p, "expected name for identifier");
+    }
+
+    while (!parse_next_eq(p, t_eq)) {
+        expr e;
+        if (parse_expr(p, &e, 1, 1)) {
+            vector_pushcpy(&xid.val.substitutes, &e);
+        } else {
+            return throw_here(p, "expected = or substitute");
+        }
+    }
+
+    xid.substitutes.end = p->current.s.start;
+    span eq = p->current.s;
+
+    xid.val.val = heap(sizeof(expr));
+    if (!parse_expr(p, xid.val.val, 0, 0)) {
+        synchronize(p); throw(&eq, "expected value");
+    }
+
+    id* heap_id = heapcpy(sizeof(xid), &xid);
+    map_insertcpy(&p->mod->ids, &xid.name, &heap_id);
+
+    xid.s.end = p->current.s.end;
     return 1;
 }
 
-int is_id(id_type* tid) {
-    return !tid->td.flags;
-}
+int parse_mod(parser* p, module* b) {
+    module_init(b);
+    module* old_b = p->mod;
+    p->mod = b;
 
-void parse_set_left(expr* expr, left l, void* x) {
-    expr->left = l;
-    expr->x = x;
-}
+    while (!parse_next_eq(p, t_eof)) {
+        parse_id(p);
 
-void parse_detach(expr* x_expr) {
-    expr* detached = malloc(sizeof(expr));
-    memcpy(detached, x_expr, sizeof(expr));
-
-    x_expr->left = left_expr;
-    x_expr->x = detached;
-}
-
-void stmt_free(stmt* s);
-
-void block_init(block* b) {
-    b->stmts = vector_new(sizeof(stmt));
-
-    b->declarations = map_new();
-    map_configure_string_key(&b->declarations, sizeof(stmt));
-}
-
-void block_free(block* b) {
-    vector_iterator iter = vector_iterate(&b->stmts);
-    while (vector_next(&iter)) {
-        stmt_free(iter.x);
-    }
-
-    vector_free(&b->stmts);
-    map_free(&b->declarations);
-
-    free(b);
-}
-
-int parse_separated(parser* p, token_type sep, token_type end) {
-    if (parse_next_eq(p, end)) return 1;
-
-    if (!parse_next_eq(p, sep)) {
-        throw_here(p, "expected separator");
-    }
-
-    return 0;
-}
-
-int parse_stmt_end(parser* p) {
-    //any separator works, but only semicolon is parsed
-    if (!separator(p)) throw_here(p, "expected semicolon after statement");
-    return parse_next_eq(p, t_sep);
-}
-
-void fn_free(fn_stmt* fn) {
-    vector_free(&fn->args); block_free(&fn->val); free(fn);
-}
-
-void print_block(block* b);
-int parse_block(parser* p, block* b);
-
-/// parses bind or set, returns name of binding
-int try_parse_bind_fn(parser* p) {
-    id_type tid;
-
-    if (parse_id_type(p, &tid) && parse_next_eq(p, t_id)) {
-        stmt s;
-        char* target;
-
-        s.s.start = tid.s.start;
-        target = p->x.val; //name of binding
-
-        if (parse_next_eq(p, t_lparen)) {
-            //parse fn
-            fn_stmt* fn = malloc(sizeof(fn_stmt));
-            span fn_paren = p->x.s;
-
-            fn->ty = tid;
-            fn->name = target;
-            fn->args = vector_new(sizeof(fn_arg));
-            block_init(&fn->val);
-
-            //parse arguments
-            while (!parse_next_eq(p, t_rparen)) {
-                if (separator(p)) {
-                    fn_free(fn);
-
-                    throw_here(p, "expected matching paren for function declaration");
-                    note(p->fe, &fn_paren, "other paren here");
-                    return 1; //consume
-                }
-
-                fn_arg* arg = vector_push(&fn->args);
-
-                if (!parse_id_type(p, &arg->ty)) {
-                    throw_here(p, "expected argument type");
-                    synchronize(p);
-                }
-
-                if (!parse_next_eq(p, t_id)) {
-                    throw_here(p, "expected argument name");
-                    synchronize(p);
-                }
-
-                arg->name = p->x.val;
-
-                stmt* fn_arg_s = vector_push(&fn->val.stmts);
-                fn_arg_s->t = s_fn_arg; fn_arg_s->s=p->x.s; fn_arg_s->x = arg;
-
-                scope_insert(p->fe, &fn->val.declarations, arg->name, fn_arg_s);
-
-                if (parse_separated(p, t_comma, t_rparen)) break;
-            }
-
-            s.s.end = p->x.s.end; //span only includes function header
-
-            if (!parse_block(p, &fn->val)) {
-                fn->extern_fn=1;
-            } else {
-                fn->extern_fn=0;
-            }
-
-            s.t=s_fn;
-            s.x=fn;
-
-            scope_insert(p->fe, &p->current->declarations, target, &s);
-        } else {
-            bind_stmt* bind = malloc(sizeof(bind_stmt));
-            bind->name = target;
-            bind->ty = tid;
-
-            if (parse_next_eq(p, t_set)) {
-                if (!parse_block(p, &bind->val)) {
-                    throw_here(p, "expected block or expression in binding");
-                    bind->uninitialized=1;
-                } else {
-                    bind->uninitialized=0;
-                }
-            } else {
-                bind->uninitialized=1;
-            }
-
-            parse_stmt_end(p);
-
-            s.t=s_bind;
-            s.x=bind;
-            s.s.end = p->x.s.end;
+        if (!separator(p)) {
+            synchronize(p);
+            throw_here(p, "expected end of identifier (newline without indentation)");
         }
 
-        vector_pushcpy(&p->current->stmts, &s);
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-int parse_stmt(parser* p) {
-    parser peek_parser = *p; //TODO: make cleaner peek procedure mechanisms
-
-    if (try_parse_bind_fn(&peek_parser)) {
-        *p = peek_parser; //update pos
-        return 1;
+        parse_next_eq(p, t_sync);
     }
 
-    stmt new_s;
-    int ret = parse_next_eq(p, t_return);
-
-    expr* e = try_parse_new_expr(p);
-    if (e) {
-        if (!parse_stmt_end(p)) ret=1; //if there isn't a semicolon, it shall be qualified as a return statement, which can later be validated
-
-        new_s.t = ret ? s_ret : s_expr;
-        new_s.x = e;
-
-        new_s.s.start=e->span.start;
-        new_s.s.end=p->x.s.end;
-
-        vector_pushcpy(&p->current->stmts, &new_s);
-        return 1;
-    }
-
-    throw_here(p, "expected statement/expression");
-    return 0;
-}
-
-int try_parse_block_inner(parser* p) {
-    if (parse_next_eq(p, t_lbrace)) {
-        span l_brace = p->x.s;
-
-        while (!parse_next_eq(p, t_rbrace)) {
-            if (separator(p)) {
-                throw_here(p, "expected matching brace for block");
-                note(p->fe, &l_brace, "other brace here");
-
-                return 1; //consume
-            }
-
-            if (!parse_stmt(p)) {
-                synchronize(p);
-            }
-        }
-
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-//code duplication abound
-
-int parse_block_braced(parser* p, block* b) {
-    block_init(b);
-    block* old_b = p->current;
-    p->current = b;
-
-    int ret = try_parse_block_inner(p);
-
-    p->current = old_b;
-
-    return ret;
-}
-
-int parse_block(parser* p, block* b) {
-    if (parse_next_eq(p, t_sep)) return 0;
-
-    block_init(b);
-    block* old_b = p->current;
-    p->current = b;
-
-    if (!try_parse_block_inner(p)) {
-        //try to parse expression as return statement
-
-        stmt s = {.t=s_ret};
-        s.s.start = parse_peek(p)->s.start;
-
-        expr* x = try_parse_new_expr(p);
-        if (!x) {
-            throw_here(p, "expected expression");
-            p->current = old_b;
-            return 0;
-        }
-
-        s.x = x;
-        s.s.end = p->x.s.end;
-        vector_pushcpy(&b->stmts, &s);
-    }
-
-    p->current = old_b;
+    p->mod = old_b;
     return 1;
 }
 
 void parse(frontend* fe) {
     parser p = {fe, .pos=0};
 
-    block_init(&p.fe->global);
+    module_init(&p.fe->global);
+    p.mod = &p.fe->global;
 
-    p.current = &p.fe->global;
-
-    while (parse_peek(&p)->tt!=t_eof && parse_stmt(&p));
+    parse_mod(&p, &p.fe->global);
 }
 
-int try_parse_left_access(parser* p, expr* x_expr) {
-    id_type* tid = malloc(sizeof(id_type));
-    if (parse_id_type(p, tid)) {
-        if (is_id(tid) && parse_next_eq(p, t_lparen)) {
-            span fn_paren = p->x.s;
+access unqualified_access(parser* p, char* x) {
+    access a;
 
-            fn_call* fc = malloc(sizeof(fn_call));
-            fc->args = vector_new(sizeof(expr));
-            fc->name = tid->name;
-            fc->target = NULL;
+    vector_iterator for_iter = vector_iterate(&p->reducers);
+    while (vector_next(&for_iter)) {
+        for_expr** fore = for_iter.x;
 
-            //parse arguments
-            while (!parse_next_eq(p, t_rparen)) {
-                if (separator(p)) {
-                    free(fc); vector_free(&fc->args);
+        if (strcmp((*fore)->name, x) == 0) {
+            a.res = a_for;
+            a.val.fore = *fore;
+            return a;
+        }
+    }
 
-                    throw_here(p, "expected matching paren for function call");
-                    note(p->fe, &fn_paren, "other paren here");
-                    return 0;
-                }
+    unsigned long* idx = map_find(p->substitute_idx, &x);
+    if (idx) {
+        a.res = a_sub;
+        a.val.idx = *idx;
+        return a;
+    }
 
-                expr* expr_arg = vector_push(&fc->args);
-                if (!try_parse_expr(p, expr_arg, 0)) { //parse expr in place
-                    throw_here(p, "expected argument"); //throw a descriptive error
-                    synchronize(p);
-                }
+    id* xid = map_find(&p->mod->ids, &x);
+    if (xid) {
+        a.res = a_id;
+        a.val.id = xid;
+        return a;
+    }
 
-                if (parse_separated(p, t_comma, t_rparen)) break;
-            }
+    a.res = a_unbound;
+    return a;
+}
 
-            parse_set_left(x_expr, left_call, fc);
-        } else {
-            expr* r_expr = parse_idx(p);
+access qualified_access(parser* p, name* n) {
+    if (!n->qualifier) {
+        return unqualified_access(p, n->x);
+    }
 
-            if (r_expr) {
-                //set left to index expr
-                expr* index_expr = malloc(sizeof(expr));
-                parse_set_left(index_expr, left_access, tid);
-                index_expr->right=r_expr;
+    //TODO: qualified ids
 
-                parse_set_left(x_expr, left_expr, index_expr);
-            } else {
-                //not call or index, simple access
-                parse_set_left(x_expr, left_access, tid);
-            }
+    access a;
+    a.res = a_unbound;
+    return a;
+}
+
+//i was going to use this but now it just makes the code harder to read
+typedef enum {left_fail=0, left_fallthrough, left_parsed} left_parse_result;
+
+left_parse_result parse_left_expr(parser* p, left* left, int bind) {
+    left->flags=0;
+
+    if (parse_next_eq(p, t_sub)) left->flags |= left_neg;
+    if (parse_next_eq(p, t_add)) left->flags |= left_add;
+
+    if (parse_next_eq(p, t_for)) {
+        for_expr* fore = heap(sizeof(for_expr));
+        parse_expr(p, &fore->i, 0, 1);
+        
+        if (!try_parse_unqualified(p)) {
+            free(fore);
+            return throw_here(p, "expected name for identifier of for expression");
         }
 
-        return 1;
-    } else {
-        return -1;
+        fore->name = p->current.val.name->x;
+
+        if (parse_next_eq(p, t_eq)) {
+            if (!parse_expr(p, &fore->base, 0, 1)) {
+                free(fore); return throw_here(p, "expected base expression");
+            }
+        } else {
+            fore->base.left = left_access;
+            fore->base.apply = unapplied;
+
+            access a = unqualified_access(p, fore->name);
+            if (a.res == a_unbound) {
+                free(fore); return throw_here(p, "implicit reference in base of for expression is not defined");
+            }
+
+            fore->base.val.access = heapcpy(sizeof(access), &a);
+        }
+
+        vector_pushcpy(&p->reducers, &fore);
+
+        if (!parse_expr(p, &fore->x, 0, 1)) {
+            free(fore);
+            return left_fallthrough;
+        }
+
+        vector_pop(&p->reducers);
+
+        x_expr->left = left_for;
+        x_expr->val.fore = fore;
+
+        return left_parsed;
     }
-}
-
-int try_parse_left_expr(parser* p, expr* x_expr) {
-    x_expr->flags=0;
-
-    if (parse_next_eq(p, t_ref)) {
-        x_expr->flags |= left_ref;
-    }
-
-    if (parse_next_eq(p, t_sub)) x_expr->flags |= left_neg;
-    if (parse_next_eq(p, t_incr)) x_expr->flags |= left_incr;
-    if (parse_next_eq(p, t_decr)) x_expr->flags |= left_decr;
 
     if (parse_next_eq(p, t_num)) {
-        //copy to left
-        num* x = p->x.val;
-        parse_set_left(x_expr, left_num, x);
-    } else if (parse_next_eq(p, t_char)) {
-        char* c = p->x.val;
-        parse_set_left(x_expr, left_char, c);
+        x_expr->left = left_num;
+        x_expr->val.num = p->current.val.num;
     } else if (parse_next_eq(p, t_str)) {
-        char* str = p->x.val;
-        parse_set_left(x_expr, left_str, str);
+        x_expr->left = left_str;
+        x_expr->val.str = p->current.val.str;
+    } else if (try_parse_name(p)) {
+        if (bind && !p->current.val.name->qualifier) {
+            x_expr->left = left_bind;
+            map_insertcpy(p->substitute_idx, &p->current.val.name->x, &p->substitute_idx->length);
+            x_expr->val.bind = p->substitute_idx->length; //set value to index
+
+            return left_parsed;
+        }
+
+        access a = qualified_access(p, p->current.val.name);
+
+        x_expr->left = left_access;
+        x_expr->val.access = heapcpy(sizeof(access), &a);
+
+        if (a.res == a_unbound) throw_here(p, "name does not reference an identifier, reducer, or substitute");
     } else {
-        return try_parse_left_access(p, x_expr);
+        return left_fallthrough; //not an expression, while zero is failure
     }
 
-    if (parse_next_eq(p, t_incr)) x_expr->flags |= left_incr_after;
-    if (parse_next_eq(p, t_decr)) x_expr->flags |= left_decr_after;
-
-    return 1;
+    return left_parsed;
 }
 
-int try_parse_expr(parser* p, expr* x_expr, unsigned op_prec) {
-    int left=0; //error in the left side: return the right side instead
-    span* l_paren=NULL;
-
-    if (parse_next_eq(p, t_lparen)) {
+int parse_expr(parser* p, expr* x_expr, int bind, unsigned op_prec) {
+    int lparen = 0;
+    if (parse_next_eq(p, t_paren)) {
         //parentheses around expression, set base precedence to zero
-        l_paren = &p->x.s;
         op_prec = 0;
+        lparen = 1;
     }
 
-    x_expr->span.start = parse_peek(p)->s.start;
-    //parse left side and set left status
-    left = try_parse_left_expr(p, x_expr);
-    if (left == -1) return 0; //no left expr, probably not an expression
+    x_expr->left.span.start = parse_peek(p)->s.start;
+    x_expr->substitutes = vector_new(sizeof(expr));
 
-    x_expr->span.end = p->x.s.end;
-    x_expr->op = op_none;
+    left_parse_result left = parse_left_expr(p, x_expr, bind);
+
+    if (left==left_fail || left==left_fallthrough) return 0;
+
+    x_expr->left.span.end = p->current.s.end;
+    x_expr->apply = unapplied;
 
     //parse ops
     while(1) {
-        op x_op;
-        unsigned x_op_prec;
+        if (parse_next_eq(p, t_paren)) {
+            if (lparen) {
+                lparen = 0;
+                x_expr->left.span.end = p->current.s.end; //update span end
 
-        switch (parse_peek(p)->tt) {
-            case t_rparen: {
-                if (l_paren) {
-                    //consume paren
-                    parse_next(p);
-                    l_paren = NULL;
-                    x_expr->span.end = p->x.s.end; //update span end
-
-                    //try to parse expr, in case this is a cast
-                    parser peek_parser = *p;
-
-                    expr cast_expr;
-                    if (try_parse_expr(&peek_parser, &cast_expr, op_prec)) {
-                        x_op = op_cast;
-                        x_op_prec = 4;
-                        break;
-                    }
-
-                    //restart loop
-                    continue;
-                } else {
-                    return 1;
-                }
+                continue;
+            } else {
+                return 1;
             }
-
-            case t_set: {
-                x_op = op_set;
-                x_op_prec = 0;
-                break;
-            }
-
-            case t_add: {
-                x_op = op_add;
-                x_op_prec = 2;
-                break;
-            }
-
-            case t_sub: {
-                x_op = op_sub;
-                x_op_prec = 2;
-                break;
-            }
-
-            case t_div: {
-                x_op = op_div;
-                x_op_prec = 3;
-                break;
-            }
-
-            case t_mul: {
-                x_op = op_mul;
-                x_op_prec = 3;
-                break;
-            }
-
-            default: return 1;
         }
 
+        token* tok = parse_peek(p);
+        if (!is_name(tok)) { //no op
+            break;
+        }
+
+        id* applier = map_find(&p->mod->ids, &tok->val.name->x); //TODO: qualified appliers
+        unsigned int prec=0;
+
+        if (applier) {
+            prec = applier->precedence;
+
+            x_expr->apply = applied;
+            x_expr->applier.id = applier;
+        } else if (bind) {
+            if (!lparen) return 1; //probably an identifier definition, not ours to bind to
+
+            x_expr->apply = apply_bind;
+            x_expr->applier.bind = tok->val.name;
+        } else {
+            // error depending on binding strength
+            // this allows things like for loop quantities to return after parsing but identifiers to require parsing
+            if (0 < op_prec) return 1;
+            else return throw_here(p, "undefined identifier");
+        }
+    
         //dont parse any more
-        if (x_op_prec < op_prec) break;
+        if (prec < op_prec) break;
         else parse_next(p); //otherwise increment parser
 
-        //op already exists, detach
-        //happens every time after first loop since each loop sets op
-        if (x_expr->op != op_none) {
+        //applied already, detach
+        //happens every time after first loop since each loop sets applied
+        if (x_expr->apply != unapplied) {
             parse_detach(x_expr);
         }
 
-        expr* r_expr;
+        if (x_expr->apply == apply_bind) {
+            while (1) {
+                expr* sub = vector_push(&x_expr->substitutes);
 
-        //allocate or alias, depending on whether left side exists
-        if (left) r_expr = malloc(sizeof(expr));
-        else r_expr = x_expr;
+                if (!parse_expr(p, sub, bind, prec)) {
+                    vector_pop(&x_expr->substitutes);
+                    break;
+                }
+            }
+        } else {
+            unsigned subs = applier->val.substitutes.length;
 
-        // check for assignment, ex. +=, /=, and not already an assignment op (op_set)
-        if (x_op!=op_set && parse_next_eq(p, t_set))
-            r_expr->assign=1;
+            for (unsigned i=0; i<subs; i++) {
+                expr* sub = vector_push(&x_expr->substitutes);
+                parse_expr(p, sub, bind, prec);
+            }
 
-        if (!try_parse_expr(p, r_expr, x_op_prec)) {
-            if (left) free(r_expr);
-            return 1;
+            if (x_expr->substitutes.length != applier->val.substitutes.length) {
+                throw_here(p, isprintf("expected %lu substitutes, got %lu", x_expr->substitutes.length, applier->val.substitutes));
+                note(&applier->substitutes, "defined here");
+            }
         }
-
-        if (left) {
-            x_expr->op = x_op;
-            x_expr->right=r_expr;
-        }
-
-        left=1; //left now exists whether it did or not
     }
 
     return 1;
 }
 
+void print_name(name* n) {
+    if (n->qualifier) printf("%s.", n->qualifier);
+    printf("%s", n->x);
+}
+
 void print_expr(expr* e) {
-    if (e->flags & left_neg) {
-        printf("-");
-    }
-    if (e->flags & left_ref) printf("&");
+    if (e->flags & left_neg) printf("-");
+    if (e->flags & left_add) printf("+");
 
     switch (e->left) {
-        case left_num: print_num((num*)e->x); break;
-        case left_char: printf("%c", *(char*)e->x); break;
-        case left_str: printf("\"%s\"", (char*)e->x); break;
+        case left_num: print_num((num*)e->val.num); break;
+        case left_str: printf("\"%s\"", (char*)e->val.str); break;
         case left_expr: {
-            printf("("); print_expr((expr*)e->x); printf(")");
+            printf("("); print_expr((expr*)e->val.expr); printf(")");
             break;
         }
-        case left_access: printf("%s", (char*)e->x); break;
-        case left_call: {
-            fn_stmt* fn = ((fn_call*)e->x)->target; //TODO: make my language fix this
-            if (!fn) return;
+        case left_bind: printf("%s", (char*)e->val.bind); break;
+        case left_access: {
+            switch (e->val.access->res) {
+                case a_unbound: printf("(unbound)");
+                case a_for: printf("%s", e->val.access->val.fore->name);
+                case a_sub: printf("(sub %lu)", e->val.access->val.idx);
+                case a_id: printf("%s", e->val.access->val.id->name);
+            }
 
-            printf("%s(%lu args)", fn->name, ((fn_call*)e->x)->args.length);
+            break;
+        }
+        case left_for: {
+            printf("for ");
+            print_expr(&e->val.fore->i); printf(" ");
+            printf("%s", e->val.fore->name); printf(" ");
+            print_expr(&e->val.fore->base); printf(" ");
+            print_expr(&e->val.fore->x);
+
             break;
         }
     }
 
-    switch (e->op) {
-        case op_cast: printf(" <: ("); print_expr(e->right); printf(")"); break;
-        case op_add: printf(" + ("); print_expr(e->right); printf(")"); break;
-        case op_div: printf(" / ("); print_expr(e->right); printf(")"); break;
-        case op_mul: printf(" * ("); print_expr(e->right); printf(")"); break;
-        case op_sub: printf(" - ("); print_expr(e->right); printf(")"); break;
-        case op_set: printf(" = ("); print_expr(e->right); printf(")"); break;
-        case op_idx: printf("["); print_expr(e->right); printf("]"); break;
-        default: return;
+    if (e->apply == apply_bind) {
+        printf(" "); print_name(e->applier.bind); printf(" ");
+    } else if (e->apply == applied) {
+        printf(" "); printf("%s", e->applier.id->name); printf(" ");
+    } else {
+        return;
+    }
+
+    vector_iterator iter = vector_iterate(&e->substitutes);
+    while(vector_next(&iter)) {
+        print_expr(iter.x); printf(" ");
     }
 }
 
-void print_block(block* b) {
-    vector_iterator x = vector_iterate(&b->stmts);
-    while (vector_next(&x)) {
-        stmt* s = x.x;
-        switch (s->t) {
-            case s_ret: printf("return ");
-            case s_expr: print_expr(s->x); printf(";"); break;
-
-            case s_bind: {
-                bind_stmt* bind = s->x;
-                printf("%s %s = ", type_str(&bind->ty.td), bind->name);
-                if (bind->uninitialized) printf("uninitialized"); else print_block(&bind->val);
-                break;
-            }
-
-            case s_ret_block: printf("return ");
-            case s_block: print_block(s->x); break;
-
-            case s_fn: {
-                fn_stmt* fn = s->x;
-                printf("fn %s(%lu) -> %s {\n", fn->name, fn->args.length, type_str(&fn->ty.td));
-                print_block(&fn->val);
-                printf("}");
-                break;
-            }
-
-            case s_fn_arg: {
-                printf("argument"); break;
-            }
-
-            default:;
+void print_module(module* b) {
+    map_iterator x = map_iterate(&b->ids);
+    while (map_next(&x)) {
+        id* xid = *(id**)x.x;
+        printf("%s ", xid->name);
+        
+        vector_iterator iter = vector_iterate(&xid->val.substitutes);
+        while(vector_next(&iter)) {
+            print_expr(iter.x); printf(" ");
         }
+
+        printf("= ");
+
+        print_expr(xid->val.val);
 
         printf("\n");
-    }
-}
-
-void expr_free(expr* e) {
-    switch (e->left) {
-        case left_expr: expr_free(e->x); break;
-        case left_call: free(e->x);
-        default:;
-    }
-
-    if (e->op != op_none) expr_free(e->right);
-
-    free(e);
-}
-
-void stmt_free(stmt* s) {
-    switch (s->t) {
-        case s_fn: fn_free(s->x); break;
-        case s_fn_arg: break;
-
-        case s_ret_block: case s_block: block_free(s->x); break;
-        case s_ret: case s_expr: expr_free(s->x); break;
-
-        default: free(s->x);
     }
 }

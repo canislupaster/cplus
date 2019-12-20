@@ -33,7 +33,16 @@ void* vector_pushcpy(vector* vec, void* x) {
     return pos;
 }
 
-void* vector_pop(vector* vec) {
+int vector_pop(vector* vec) {
+    if (vec->length == 0) return 0;
+
+    vec->length--;
+    vec->data = realloc(vec->data, vec->size*vec->length);
+
+    return 1;
+}
+
+void* vector_popcpy(vector* vec) {
     if (vec->length == 0) return NULL;
 
     void* x = malloc(vec->size);
