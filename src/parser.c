@@ -1,677 +1,938 @@
-#include "frontend.c"
-
-typedef struct {
-    frontend* fe;
-    token current;
-
-    unsigned long pos;
-
-    module* mod;
-    map* substitute_idx;
-    vector reducers;
-} parser;
+#include "parser.h"
 
 int throw_here(parser* p, const char* x) {
-    return throw(&p->current.s, x);
+  return throw(&p->current.s, x);
 }
 
-/// doesn't return null
-void parse_next(parser* p) {
-    p->current = *(token*)vector_get(&p->fe->tokens, p->pos);
-    if (p->current.tt != t_eof) p->pos++;
+token* parse_peek_x(parser* p, int x) {
+  token* tok = vector_get(&p->fe->tokens, p->pos+x-1);
+
+  if (tok && tok->tt == t_sync) {
+	return parse_peek_x(p, x+1);
+  } else {
+	return tok;
+  }
 }
 
 /// doesn't return null
 token* parse_peek(parser* p) {
-    return vector_get(&p->fe->tokens, p->pos);
+  return parse_peek_x(p, 1);
 }
 
-token_type parse_peek_x(parser* p, int x) {
-    token* t = vector_get(&p->fe->tokens, p->pos+x-1);
-    return t ? t->tt : t_eof;
+/// doesn't return null
+void parse_next(parser* p) {
+  p->current = *parse_peek(p);
+  if (p->current.tt != t_eof) p->pos++;
+}
+
+int peek_sync(parser *p) {
+  return ((token*)vector_get(&p->fe->tokens, p->pos))->tt == t_sync;
+}
+
+int parse_sync(parser *p) {
+  int s = 0;
+
+  while (peek_sync(p)) { //skip synchronization characters
+    s=1; p->pos++;
+  }
+
+  return s;
 }
 
 /// returns 0 if not matched, otherwise sets p.x
 int parse_next_eq(parser* p, token_type tt) {
-    token* t = parse_peek(p);
-    if (t->tt == tt) {
-        p->pos++;
-        p->current = *t;
-        return 1;
-    } else {
-        return 0;
-    }
+  token* t = parse_peek(p);
+  if (t->tt == tt) {
+	p->pos++;
+	p->current = *t;
+
+	return 1;
+  } else {
+	return 0;
+  }
 }
 
 int separator(parser* p) {
-    token* t = parse_peek(p);
-    return t->tt == t_eof || t->tt==t_sync;
+  token* t = parse_peek(p);
+  return t->tt == t_eof || parse_sync(p);
 }
 
 void synchronize(parser* p) {
-    while (!separator(p)) parse_next(p);
+  while (!separator(p))
+	parse_next(p);
 }
 
-int parse_expr(parser* p, expr* x_expr, int bind, unsigned op_prec); //forward decl
+expr* expr_new(expr* first) {
+  expr* x = heap(sizeof(expr));
 
-void parse_detach(expr* x_expr) {
-    expr* detached = heapcpy(sizeof(expr), x_expr);
+  x->cost = 0;
+  x->first = first;
 
-    x_expr->left.kind = left_expr;
-    x_expr->left.val.expr = detached;
+  x->s.start = NULL;
+  x->s.end = NULL;
+  return x;
 }
 
-void module_init(module* b) {
-    b->ids = map_new();
-    map_configure_string_key(&b->ids, sizeof(id*));
-}
-//
-//value value_new(expr* e) {
-//    value v = {.substitutes=vector_new(sizeof(expr)), .val=e}; //TODO: REDUCTION
-//    return v;
-//}
-//
-//value from_left(expr* e) {
-//    value v = value_new(e);
-//    return v;
-//}
-//
-//int resolve_i(expr* i) {
-//
-//}
-//
-// //FIRST: number from i and derivative from current
-// int resolve_for(for_expr* fore) {
-//
-// }
-//
-//int value_eq(parser* p, value* x1, value* x2) {
-//    if (x1->substitutes.length != x2->substitutes.length) return 0;
-//    vector_iterator iter = vector_iterate(&x1->substitutes);
-//
-//    while (vector_next(&iter)) {
-//        if (!expr_eq(iter.current, vector_get(&x2->substitutes, iter.i-1))) return 0;
-//    }
-//}
+expr* expr_new_p(parser* p, expr* first) {
+  expr* x = expr_new(first);
+  x->s.start = x->first ? x->first->s.start : p->current.s.start;
 
-int expr_eq(value* v1, value* v2, expr* e1, expr* e2, int nocompare);
-
-int fore_eq(for_expr* fore1, for_expr* fore2, int nocompare) {
-    return expr_eq(NULL, NULL, &fore1->i, &fore2->i, nocompare)
-            && expr_eq(NULL, NULL, &fore1->base, &fore2->base, nocompare)
-            && expr_eq(NULL, NULL, &fore1->x, &fore2->x, nocompare + 1);
+  return x;
 }
 
-int id_eq(id* id1, id* id2, int nocompare) {
-    if (id1 == id2) return 1;
+const expr EXPR_ONE = {.kind=exp_add, .val = {.by = &ONE}};
+const expr EXPR_ZERO = {.kind=exp_add, .val = {.by = &ZERO}};
 
-    if (id1->val.substitutes.length != id2->val.substitutes.length) return 0;
+int binary(expr* exp) {
+  return exp->kind != exp_for && exp->kind != exp_invert && exp->kind != exp_call;
+}
 
-    vector_iterator iter = vector_iterate(&id1->val.substitutes);
-    vector_iterator iter2 = vector_iterate(&id2->val.substitutes);
+exp_idx* descend(exp_idx* start, move_kind kind) {
+  exp_idx* new = heap(sizeof(exp_idx));
+  new->from = start;
+  new->kind = kind;
+
+  return new;
+}
+
+exp_idx* descend_i(exp_idx* start, move_kind kind, unsigned long i) {
+  exp_idx* new = descend(start, kind);
+  new->i = i;
+
+  return new;
+}
+
+int bind(expr* from, expr* to, substitution* sub, exp_idx* cursor) {
+  if (from->kind == exp_call) {
+	//do thing
+	return 1;
+  }
+
+  if (to->kind != from->kind) return 0;
+
+  if (from->first && to->first) {
+    bind(from->first, to->first, sub, descend(cursor, move_left));
+  } else if (from->first && !to->first) {
+    return 0;
+  }
+
+  switch (from->kind) {
+  case exp_cond:
+  case exp_def:
+  case exp_for: {
+    //x should always be the same, match on base and i
+	if (!bind(from->_for.base, to->_for.base, sub, descend(cursor, move_for_base))) return 0;
+	if (!bind(from->_for.i, to->_for.i, sub, descend(cursor, move_for_i))) return 0;
+
+	break;
+  }
+
+  case exp_invert: break;
+
+  default: {
+	if (to->ty == exp_bind) { //bind from to to
+	  vector_pushcpy(&sub->val, &from);
+	} else if (from->ty == exp_bind) { //make sure from == to at runtime
+	  sub_cond cond = {.where = cursor};
+	  vector_pushcpy(&sub->condition, &cond);
+	} else if (from->ty == to->ty) {
+	  switch (from->ty) {
+	  case exp_num: return num_eq(*from->val.by, *to->val.by);
+	  case exp_inner: return bind(from->val.inner, to->val.inner, sub, descend(cursor, move_right));
+	  default:;
+	  }
+	} else {
+	  return 0;
+	}
+  }
+  }
+
+  return 1;
+}
+
+expr* exp_copy(expr* exp) {
+  expr* new_exp = heapcpy(sizeof(expr), exp);
+  *new_exp = *exp;
+
+  if (exp->first) new_exp->first = exp_copy(exp->first);
+
+  switch (new_exp->kind) {
+  case exp_cond:
+  case exp_def:
+  case exp_for: {
+	new_exp->_for.i = exp_copy(new_exp->_for.i);
+	new_exp->_for.base = exp_copy(new_exp->_for.base);
+
+	break;
+  }
+  case exp_call: {
+	vector_cpy(&exp->call.sub.condition, &new_exp->call.sub.condition);
+	vector_cpy(&exp->call.sub.val, &new_exp->call.sub.val);
+
+	vector_iterator iter = vector_iterate(&new_exp->call.sub.val);
+	while (vector_next(&iter)) {
+	  iter.x = exp_copy(*(expr**)iter.x);
+	}
+  }
+
+  default:;
+  }
+
+  return new_exp;
+}
+
+//uniquely renames identifiers in loops n stuff
+void exp_rename(expr* exp, unsigned offset) {
+  if (binary(exp) && exp->ty == exp_bind) {
+	exp->val.bind += offset;
+  } else if (exp->kind == exp_for) {
+    exp->_for.i += offset;
+  }
+}
+
+//substitutes in reverse in comparison to bind function
+int substitute(expr* exp, substitution* sub) {
+  switch (exp->kind) {
+  case exp_invert: break;
+
+  case exp_cond:
+  case exp_def:
+  case exp_for: {
+    substitute(exp->_for.base, sub);
+    substitute(exp->_for.i, sub);
+
+    break;
+  }
+  case exp_call: {
+    vector_iterator iter = vector_iterate(&exp->call.sub.val);
+    iter.rev = 1;
 
     while (vector_next(&iter)) {
-        vector_next(&iter2);
-        if (!expr_eq(&id1->val, &id2->val, iter.x, iter2.x, nocompare))
-            return 0;
+	  substitute(*(expr**)iter.x, sub);
     }
 
-    return expr_eq(NULL, NULL, id1->val.val, id2->val.val, nocompare);
-}
+    break;
+  }
 
-int applied_eq(expr* e1, expr* e2, int nocompare) {
-
-}
-
-int expr_eq(value* v1, value* v2, expr* e1, expr* e2, int nocompare) {
-    if (e1 == e2) return 1;
-    if (e1->left!=e2->left || e1->flags!=e2->flags || e1->substitutes.length != e2->substitutes.length) return 0;
-
-    switch (e1->left) {
-        case left_str: return strcmp(e1->val.str, e2->val.str) == 0;
-        case left_num: return e1->val.num->ty == e2->val.num->ty && e1->val.num->uint == e2->val.num->uint;
-        case left_expr: return expr_eq(NULL, NULL, e1, e2, nocompare);
-        case left_for: return fore_eq(e1->val.fore, e2->val.fore, nocompare - 1);
-        case left_access: {
-            if (e1->val.access->res != e2->val.access->res) return 0;
-
-            switch (e1->val.access->res) {
-                case a_unbound: return 1;
-                case a_id: return id_eq(e1->val.access->val.id, e2->val.access->val.id, nocompare);
-                case a_for: {
-                    if (!nocompare) return fore_eq(e1->val.access->val.fore, e1->val.access->val.fore, nocompare + 1);
-                }
-                case a_sub: {
-                    return e1->val.access->val.idx == e2->val.access->val.idx;
-                }
-            }
-        }
-        case left_bind: {
-            // compare if both substitute positions are equal
-            return e1->val.bind == e2->val.bind;
-        }
+  default: {
+    if (exp->ty == exp_bind) {
+      expr** res = vector_get(&sub->val, exp->val.bind);
+      if (res) { //if binding is a substitute
+		exp->ty = exp_inner;
+		exp->val.inner = *(expr**)res;
+      }
+    } else if (exp->ty == exp_inner) {
+      substitute(exp->val.inner, sub);
     }
+  }
+  }
+
+  if (exp->first) substitute(exp->first, sub);
+
+  return 1;
 }
 
-int bind(substitution* s, expr* be, expr* e) {
-    if (e->flags!=be->flags) return 0;
-    if (be->apply != unapplied) {
-        if (e->apply == unapplied) return 0;
-        if (be->apply == apply_bind) {
-            vector_pushcpy(&s->substitutions, &e->applier.id->val);
-        } else if (be->apply == applied) {
-            if (!id_eq(e->applier.id, be->applier.id) && !expr_eq()) return 0;
+int binding_exists(expr* e, unsigned long x) {
+  if (binary(e)) {
+    if (e->ty == exp_bind && e->val.bind == x) return 1;
+    if (e->ty == exp_inner && binding_exists(e->val.inner, x)) return 1;
+  }
 
-            vector_iterator biter = vector_iterate(&be->substitutes);
-            vector_iterator eiter = vector_iterate(&e->substitutes);
-
-            while (vector_next(&biter) && vector_next(&eiter)) {
-                if (!bind(s, biter.x, eiter.x)) return 0;
-            }
-        }
-    }
-
-    if (be->left == left_bind) {
-        value left = from_left(e);
-        vector_pushcpy(&s->substitutions, &left);
-
-        return 1;
-    } else {
-        if (e->left!=be->left) return 0;
-        switch (e->left) {
-            case left_expr: return bind(s, be->val.expr, e->val.expr);
-            default: return expr_eq(NULL, NULL, e, be, 0);
-        }
-    }
+  if (e->first) return binding_exists(e->first, x);
+  else return 0;
 }
 
-void commute(num* num1, num* num2) {
-    if (num1->ty != num2->ty) { //ensure same precision, assume two's complement
-        if (num1->ty == num_decimal) {
-            num2->ty = num_decimal;
-            num2->decimal = (double) num2->uint;
-        } else if (num2->ty == num_decimal) {
-            num1->ty = num_decimal;
-            num1->decimal = (double) num1->uint;
-        }
-    }
+//simple recursive binary function to remove a binding once from a (binary) expression
+//returns whether it has been removed completely
+int replace_binding(expr* e, unsigned long x1, expr* e2) {
+  //only descend one layer max
+  if (e->first && !e->first->first) {
+	if (replace_binding(e->first, x1, e2))
+	  return !binding_exists(e->first, x1);
+  }
+
+  if (binary(e) && e->ty == exp_bind && e->val.bind == x1) {
+	e->ty = exp_inner;
+	e->val.inner = e2;
+
+	return e->first ? !binding_exists(e->first, x1) : 1;
+  }
+
+  return 0;
 }
 
-num ZERO = {.ty = num_integer, .integer = 0};
-num ONE = {.ty = num_integer, .integer = 1};
+int remove_num(expr** eref, num* num) {
+  expr* e = *eref;
+  //only descend one layer max
+  if (e->first && !e->first->first) {
+	if (e->first->ty == exp_num && num_eq(*e->first->val.by, *num)) {
+	  expr_free(e->first);
+	  e->first = NULL;
 
-num mul(num num1, num num2) {
-    commute(&num1, &num2);
+	  return 1;
+	}
+  }
 
-    num res = {.ty = num1.ty};
-    if (num1.ty == num_decimal) {
-        res.decimal = num1.decimal * num2.decimal;
-    } else {
-        res.uint = num1.uint * num2.uint;
-    }
+  if (binary(e) && e->ty == exp_num && num_eq(*e->val.by, *num)) {
+	*eref = e->first;
+	expr_head_free(e);
+  }
 
-    return res;
+  return 0;
 }
 
-num add(num num1, num num2) {
-    commute(&num1, &num2);
+expr* goto_idx(expr* root, exp_idx* where) {
+  if (!where) return root;
 
-    num res = {.ty = num1.ty};
-    if (num1.ty == num_decimal) {
-        res.decimal = num1.decimal + num2.decimal;
-    } else {
-        res.uint = num1.uint + num2.uint;
+  root = goto_idx(root, where->from);
+
+  switch (where->kind) {
+  case move_left:
+	return root->first;
+  case move_right: {
+    if (root->ty == exp_inner) return root->val.inner;
+    else { //no inner expression, create new and set value to right of root
+      //FIXME: probably leaks memory
+      expr* new_exp = expr_new(NULL);
+      new_exp->kind = exp_add;
+      new_exp->ty = root->ty;
+      new_exp->val = root->val;
+
+      return new_exp;
     }
+  }
 
-    return res;
+  case move_for_base: return root->_for.base;
+  case move_for_i: return root->_for.i;
+
+  case move_call_i: return vector_get(&root->call.sub.val, where->i);
+  }
 }
 
+const int CALL_COST = 10;
+
+int cost(expr* e) {
+  if (e->cost)
+	return e->cost;
+  int acc = e->first ? cost(e->first) : 0;
+
+  switch (e->kind) {
+  case exp_call: {
+	vector_iterator iter = vector_iterate(&e->call.sub.val);
+	while (vector_next(&iter)) {
+	  acc += cost(iter.x);
+	}
+
+	e->cost = acc + CALL_COST;
+  }
+
+  case exp_for: e->cost = acc * cost(e->_for.i) + cost(e->_for.base); break;
+  case exp_cond: e->cost = acc + cost(e->_for.i) + cost(e->_for.base); break;
+  case exp_def: e->cost = acc + cost(e->_for.base); break;
+
+  default: e->cost = 1;
+  }
+
+  return e->cost;
+}
+
+// simple linear optimizer
 typedef struct {
+  map usages;
+} optimizer;
 
-};
+//bottom up optimizer
+static void opt_reduce(expr** eref, optimizer* opt) {
+  expr* e = *eref;
 
-const simple SIMPLE_ONE = {.kind=simple_num, .val = {.by = &ONE}};
-const simple SIMPLE_ZERO = {.kind=simple_num, .val = {.by = &ZERO}};
+  //redundant expression
+  if (!e->first && binary(e) && e->ty == exp_inner) {
+	e = e->val.inner;
+  }
 
-//TODO: fix mem leaks hehe
-simple* gradient(simple* step, unsigned long x) {
-    switch (step->kind) {
-        //cancel constant operations
-        case simple_invert:
-        case simple_add: {
-            return step->first ? gradient(step->first, x) : heapcpy(sizeof(simple), &SIMPLE_ZERO);
-        }
-        case simple_bind: {
-            if (step->val.bind == x) {
-                return step->first ? step->first : heapcpy(sizeof(simple), &SIMPLE_ONE);
-            }
-        }
-        //keep forms of multiplication
-        default: {
-            simple* res = heap(sizeof(simple));
-            *res = *step;
-            res->first = gradient(step->first, x);
+  if (e->first)
+	opt_reduce(&e->first, opt);
 
-            return res;
-        }
+  if (e->kind == exp_invert && e->first && e->first->kind == exp_add
+  && e->first->first && e->first->first->kind == exp_invert) {
+    expr* first = e->first->first->first;
+    expr* amount = e->first;
+    free(e);
+
+    e = expr_new(first);
+    e->kind = exp_add;
+    e->first = first;
+
+    //cleanly invert num / inner / bind
+    switch (amount->ty) {
+    case exp_num: {
+      e->ty = exp_num;
+      e->val.by = num_new(invert(*amount->val.by));
+	  free(amount);
+      break;
     }
+    case exp_inner: {
+      e->ty = exp_inner;
+      e->val.inner = expr_new(amount->val.inner);
+      e->val.inner->kind = exp_invert;
+
+      free(amount);
+
+      break;
+    }
+    case exp_bind: {
+      e->ty = exp_inner;
+
+      amount->first = NULL;
+      e->val.inner = expr_new(amount);
+      e->val.inner->kind = exp_invert;
+    }
+    }
+  }
+
+  //inner expression is a constant, extract
+  if (binary(e) && e->ty == exp_inner && binary(e->val.inner) && !e->val.inner->first) {
+	expr* inner = e->val.inner;
+	e->ty = inner->ty;
+	e->val.by = inner->val.by;
+
+	expr_free(inner);
+  }
+
+  if (e->first && !e->first->first && e->first->ty == exp_num && (!binary(e) || e->ty==exp_num)) {
+	switch (e->kind) {
+	case exp_add: set_num(e, add(*e->first->val.by, *e->val.by)); break;
+	case exp_mul: set_num(e, mul(*e->first->val.by, *e->val.by)); break;
+	case exp_div: set_num(e, num_div(*e->first->val.by, *e->val.by)); break;
+	case exp_pow: set_num(e, num_pow(*e->first->val.by, *e->val.by)); break;
+	case exp_invert: set_num(e, invert(*e->first->val.by)); break;
+
+	default:;
+	}
+  }
+
+  if (e->kind == exp_mul || e->kind == exp_div) {
+	remove_num(eref, &ONE); e=*eref;
+  } else if (e->kind == exp_add && e->first) {
+	remove_num(eref, &ZERO); e=*eref;
+  }
+
+  //TODO: simplify to def if i is 1
+  switch (e->kind) {
+  case exp_for: {
+	reduce(&e->_for.base);
+	reduce(&e->_for.i);
+
+	if (!e->_for.named || !map_find(&opt->usages, &e->_for.x)) {
+	  e->kind = exp_cond; //expression can be simplified to a conditional if step (first) does not use x
+
+	  if (!e->_for.i->first && e->_for.i->ty == exp_num && num_gt(*e->_for.i->val.by, ZERO)) {
+		e->kind = exp_def;
+	  }
+	} else if (e->first->kind == exp_add) {
+	  //reduce repeated addition to multiplication
+	  if (!replace_binding(e->first, e->_for.x, e->_for.i)) break;
+	  e->first->kind = exp_mul;
+
+	  expr* first = e->first;
+	  expr* base = e->_for.base;
+	  free(e);
+
+	  e = expr_new(first);
+	  e->kind = exp_add;
+	  e->ty = exp_inner;
+	  e->val.inner = base;
+
+	  *eref = e;
+
+	  return opt_reduce(eref, opt);
+	}
+
+	break;
+  }
+  case exp_call: {
+	vector_iterator iter = vector_iterate(&e->call.sub.val);
+	while (vector_next(&iter)) {
+	  opt_reduce(iter.x, opt);
+	}
+
+	break;
+  }
+
+  default:;
+  }
+
+  if (binary(e) && e->ty == exp_inner) {
+	opt_reduce(&e->val.inner, opt);
+  } else if (binary(e) && e->ty == exp_bind) {
+	map_insert(&opt->usages, &e->val.bind);
+  }
+
+  *eref = e;
 }
 
-int substitute(simple* exp, substitution* sub) {
-    if (exp->first) substitute(exp->first, sub);
-
-    if (exp->kind == simple_bind) {
-        exp->kind = simple_inner;
-        exp->val.inner = *(simple**)vector_get(&sub->substitutions, sub->substitutions.length);
-        vector_pop(&sub->substitutions);
-    } else if (exp->kind == simple_inner) {
-        substitute(exp->val.inner, sub);
-    }
-}
-
-void reduce(expr* e, simple* s) {
-    if (e->apply == applied) {
-        substitute(&e->applier.id->val.val, &e->substitutes);
-    }
-
-    switch (e->left) {
-        case left_for: {
-            s->first = gradient(reduce(e->val.fore->x));
-
-            s->kind = simple_num;
-            s->val.by
-        }
-    }
+void reduce(expr** exp) {
+  optimizer opt = {.usages=map_new()};
+  map_configure_ulong_key(&opt.usages, 0);
+  opt_reduce(exp, &opt);
 }
 
 int try_parse_name(parser* p) {
-    token* x = parse_peek(p);
-    if (is_name(x)) {
-        parse_next(p);
-        return 1;
-    } else {
-        return 0;
-    }
+  token* x = parse_peek(p);
+  if (is_name(x)) {
+	parse_next(p);
+	return 1;
+  } else {
+	return 0;
+  }
 }
 
 int try_parse_unqualified(parser* p) {
-    token* x = parse_peek(p);
-    if (is_name(x) && !x->val.name->qualifier) {
-        parse_next(p); return 1;
-    } else {
-        return 0;
-    }
+  token* x = parse_peek(p);
+  if (is_name(x) && !x->val.name->qualifier) {
+	parse_next(p);
+	return 1;
+  } else {
+	return 0;
+  }
+}
+
+id* id_access(parser* p, name* x) {
+  return map_find(&p->mod->ids, &x->x); //TODO: QUALIFIED
+}
+
+unsigned long* unqualified_access(parser* p, char* x) {
+  vector_iterator for_iter = vector_iterate(&p->reducers);
+  while (vector_next(&for_iter)) {
+	reducer* red = for_iter.x;
+
+	if (strcmp(red->name, x) == 0) {
+	  return &red->x;
+	}
+  }
+
+  unsigned long* idx = map_find(p->substitute_idx, &x);
+  return idx;
+}
+
+expr* parse_left_expr(parser* p, int bind) {
+  expr* ex;
+
+  if (parse_next_eq(p, t_for)) {
+	// expr --i----\-------O
+	// base         \---O
+	// inner (step)  \--O
+
+	//create branches
+	ex = expr_new_p(p, NULL);
+	ex->kind = exp_for;
+
+	ex->_for.i = parse_expr(p, bind, 1);
+	if (!ex->_for.i) {
+	  throw_here(p, "expected quantifier of for expression");
+	  free(ex);
+	  return NULL;
+	}
+
+	reducer red;
+	if (!try_parse_unqualified(p)) {
+	  ex->_for.named=0;
+	} else {
+	  red.name = p->current.val.name->x;
+	}
+
+	if (!ex->_for.named || parse_next_eq(p, t_eq)) {
+	  ex->_for.base = parse_expr(p, bind, 1);
+	  if (!ex->_for.base) {
+		throw_here(p, "expected base expression");
+		free(ex);
+		expr_free(ex->_for.i);
+		return NULL;
+	  }
+	} else {
+	  unsigned long* x = unqualified_access(p, red.name);
+
+	  if (!x) {
+		throw_here(p, "implicit reference in base of for expression is not defined");
+		free(ex);
+		expr_free(ex->_for.i);
+		return NULL;
+	  }
+
+	  ex->_for.base = expr_new_p(p, NULL);
+
+	  ex->_for.base->s = p->current.s;
+
+	  ex->_for.base->kind = exp_add;
+	  ex->_for.base->ty = exp_bind;
+	  ex->_for.base->val.bind = *x;
+	}
+
+	if (ex->_for.named) {
+	  red.x = p->substitute_idx->length;
+	  vector_pushcpy(&p->reducers, &red); //we use an extra vector to make sure reducers are accessed in order
+
+	  ex->_for.x = red.x;
+	  map_insertcpy(p->substitute_idx, &red.name, &red.x);
+	}
+
+	ex->first = parse_expr(p, bind, 1);
+
+	if (!ex->first) {
+	  free(ex);
+	  expr_free(ex->_for.i);
+	  expr_free(ex->_for.base);
+	  return NULL;
+	}
+
+	if (ex->_for.named) vector_pop(&p->reducers);
+	map_remove(p->substitute_idx, &red.name);
+  } else if (parse_next_eq(p, t_num)) {
+	ex = expr_new_p(p, NULL);
+
+	ex->kind = exp_add;
+	ex->ty = exp_num;
+	ex->val.by = p->current.val.num; //TODO: STRINGS
+  } else if (try_parse_name(p)) {
+	id* i = id_access(p, p->current.val.name);
+	if (i) {
+	  if (i->val.substitutes.length > 0) {
+		throw_here(p, "cannot substitute name, requires substitutes");
+		throw(&i->s, "defined here");
+	  }
+
+	  return i->val.val;
+	}
+
+	ex = expr_new_p(p, NULL);
+	ex->kind = exp_add;
+	ex->ty = exp_bind;
+
+	if (bind && !p->current.val.name->qualifier) {
+	  ex->val.bind = p->substitute_idx->length; //set value to index
+	  map_insertcpy(p->substitute_idx, &p->current.val.name->x, &ex->val.bind);
+	} else {
+	  unsigned long* a = unqualified_access(p, p->current.val.name->x);
+	  if (p->current.val.name->qualifier || !a) {
+		throw_here(p, "name does not reference an identifier, reducer, or substitute");
+		free(ex);
+		return NULL;
+	  }
+
+	  ex->kind = exp_add;
+	  ex->val.bind = *a;
+	}
+
+  } else {
+	return NULL; //not an expression, while zero is failure
+  }
+
+  ex->s.end = p->current.s.end;
+  return ex;
+}
+
+expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
+  expr* ex;
+
+  if (parse_next_eq(p, t_sub)) {
+	ex = expr_new_p(p, NULL);
+	ex->kind = exp_invert;
+	ex->first = parse_expr(p, do_bind, op_prec);
+
+	return ex;
+  }
+
+  if (parse_next_eq(p, t_add)) {
+	ex = expr_new_p(p, NULL);
+	ex->kind = exp_add;
+	ex->ty = exp_num;
+	ex->val.by = &ONE;
+
+	ex->first = parse_expr(p, do_bind, op_prec);
+	return ex;
+  }
+
+  if (parse_next_eq(p, t_lparen)) {
+	span lparen = p->current.s;
+	//parentheses around expression, set base precedence to zero
+	ex = parse_expr(p, do_bind, 0);
+	if (!parse_next_eq(p, t_rparen)) {
+	  throw_here(p, "expected ) to end parenthetical");
+	  note(&lparen, "left paren here");
+	}
+  } else {
+	ex = parse_left_expr(p, do_bind);
+	if (!ex)
+	  return NULL;
+  }
+
+  //parse ops
+  while (1) {
+	if (parse_peek(p)->tt == t_rparen) {
+	  return ex;
+	}
+
+	if (peek_sync(p)) { //probably another identifier's substitutes
+	  break;
+	}
+
+	token* tok = parse_peek(p);
+	if (!is_name(tok)) { //no op
+	  break;
+	}
+
+	id* applier = id_access(p, tok->val.name); //TODO: qualified appliers
+
+	if (applier) {
+	  unsigned int prec = applier->precedence;
+	  //dont parse any more
+	  if (prec < op_prec)
+		break;
+	  else
+		parse_next(p); //otherwise increment parser
+
+	  expr* new_ex = expr_new_p(p, NULL);
+	  new_ex->s.start = ex->s.start;
+	  new_ex->kind = exp_call;
+
+	  unsigned subs = applier->val.substitutes.length;
+
+	  new_ex->call.sub.condition = vector_new(sizeof(sub_cond));
+	  new_ex->call.sub.val = vector_new(sizeof(expr));
+
+	  if (!bind(ex, *(expr**)vector_get(&applier->val.substitutes, 0), &new_ex->call.sub,
+	  	descend_i(NULL, move_call_i, 0)))
+	    throw_here(p, "cannot bind substitute");
+
+	  for (unsigned i = 1; i < subs; i++) {
+		expr* sub = parse_expr(p, do_bind, prec);
+		if (!sub)
+		  break;
+
+		if (!bind(sub, *(expr**)vector_get(&applier->val.substitutes, i), &new_ex->call.sub,
+			descend_i(NULL, move_call_i, i)))
+		  throw_here(p, "cannot bind substitute");
+	  }
+
+	  if (new_ex->call.sub.val.length != applier->val.substitutes.length) {
+		throw_here(p,
+				   isprintf("expected %lu substitutes, got %lu",
+							applier->val.substitutes.length,
+							new_ex->call.sub.val.length));
+		note(&applier->substitutes, "defined here");
+		break;
+	  }
+
+	  if (CALL_COST > cost(applier->val.val) && new_ex->call.sub.condition.length == 0) {
+		expr* callee = exp_copy(applier->val.val);
+		substitute(callee, &new_ex->call.sub);
+		exp_rename(callee, p->substitute_idx->length-1);
+
+		ex = callee;
+	  } else {
+		new_ex->call.to = &applier->val;
+		ex = new_ex;
+	  }
+	} else if (0 < op_prec) {
+	  // error depending on binding strength
+	  // this allows things like for loop quantities to return after parsing but identifiers to require parsing
+	  return ex;
+	} else {
+	  throw_here(p, "undefined identifier");
+	  return NULL;
+	}
+  }
+
+  return ex;
 }
 
 int parse_id(parser* p) {
-    id xid;
-    xid.s.start = parse_peek(p)->s.start;
+  id xid;
+  xid.s.start = parse_peek(p)->s.start;
 
-    //reset reducers
-    p->reducers = vector_new(sizeof(for_expr*));
+  //reset reducers
+  p->reducers = vector_new(sizeof(reducer));
 
-    xid.val.substitutes = vector_new(sizeof(expr));
-    xid.val.substitute_idx = map_new();
+  xid.val.substitutes = vector_new(sizeof(expr*));
+  xid.val.substitute_idx = map_new();
 
-    //maps binds name to index for unbiased comparison of ids
-    map_configure_string_key(&xid.val.substitute_idx, sizeof(unsigned long));
+  //maps binds name to index for unbiased comparison of ids
+  map_configure_string_key(&xid.val.substitute_idx, sizeof(unsigned long));
 
-    p->substitute_idx = &xid.val.substitute_idx;
+  p->substitute_idx = &xid.val.substitute_idx;
 
-    //start parsing substitutes
-    xid.substitutes.start = parse_peek(p)->s.start;
+  //start parsing substitutes
+  xid.substitutes.start = parse_peek(p)->s.start;
 
-    if (parse_peek_x(p, 2) != t_eq) {
-        expr e;
-        if (parse_expr(p, &e, 1, 1)) {
-            vector_pushcpy(&xid.val.substitutes, &e);
-        } else {
-            return throw_here(p, "expected substitute");
-        }
-    }
-    
-    if (try_parse_unqualified(p)) {
-        xid.name = p->current.val.name->x;
-    } else {
-        return throw_here(p, "expected name for identifier");
-    }
+  token* maybe_eq = parse_peek_x(p, 2);
+  if (maybe_eq && maybe_eq->tt != t_eq) {
+	expr* e = parse_expr(p, 1, 1);
+	if (e) {
+	  vector_pushcpy(&xid.val.substitutes, &e);
+	} else {
+	  return throw_here(p, "expected substitute");
+	}
+  }
 
-    while (!parse_next_eq(p, t_eq)) {
-        expr e;
-        if (parse_expr(p, &e, 1, 1)) {
-            vector_pushcpy(&xid.val.substitutes, &e);
-        } else {
-            return throw_here(p, "expected = or substitute");
-        }
-    }
+  if (try_parse_unqualified(p)) {
+	xid.name = p->current.val.name->x;
+  } else {
+	return throw_here(p, "expected name for identifier");
+  }
 
-    xid.substitutes.end = p->current.s.start;
-    span eq = p->current.s;
+  while (!parse_next_eq(p, t_eq)) {
+	expr* e = parse_expr(p, 1, 1);
+	if (e) {
+	  vector_pushcpy(&xid.val.substitutes, &e);
+	} else {
+	  return throw_here(p, "expected = or substitute");
+	}
+  }
 
-    xid.val.val = heap(sizeof(expr));
-    if (!parse_expr(p, xid.val.val, 0, 0)) {
-        synchronize(p); throw(&eq, "expected value");
-    }
+  xid.substitutes.end = p->current.s.start;
+  span eq = p->current.s;
 
-    id* heap_id = heapcpy(sizeof(xid), &xid);
-    map_insertcpy(&p->mod->ids, &xid.name, &heap_id);
+  xid.val.val = parse_expr(p, 0, 0);
+  if (!xid.val.val) {
+	return throw(&eq, "expected value");
+  }
 
-    xid.s.end = p->current.s.end;
-    return 1;
+  reduce(&xid.val.val);
+
+  xid.s.end = p->current.s.end;
+  map_insertcpy(&p->mod->ids, &xid.name, &xid);
+
+  return 1;
+}
+
+void module_init(module* b) {
+  b->ids = map_new();
+  map_configure_string_key(&b->ids, sizeof(id));
 }
 
 int parse_mod(parser* p, module* b) {
-    module_init(b);
-    module* old_b = p->mod;
-    p->mod = b;
+  module_init(b);
+  module* old_b = p->mod;
+  p->mod = b;
 
-    while (!parse_next_eq(p, t_eof)) {
-        parse_id(p);
+  while (!parse_next_eq(p, t_eof)) {
+	parse_id(p);
 
-        if (!separator(p)) {
-            synchronize(p);
-            throw_here(p, "expected end of identifier (newline without indentation)");
-        }
+	if (!separator(p)) {
+	  synchronize(p);
+	  throw_here(p, "expected end of identifier (newline without indentation)");
+	}
+  }
 
-        parse_next_eq(p, t_sync);
-    }
-
-    p->mod = old_b;
-    return 1;
+  p->mod = old_b;
+  return 1;
 }
 
 void parse(frontend* fe) {
-    parser p = {fe, .pos=0};
+  parser p = {fe, .pos=0};
 
-    module_init(&p.fe->global);
-    p.mod = &p.fe->global;
+  module_init(&p.fe->global);
+  p.mod = &p.fe->global;
 
-    parse_mod(&p, &p.fe->global);
-}
-
-access unqualified_access(parser* p, char* x) {
-    access a;
-
-    vector_iterator for_iter = vector_iterate(&p->reducers);
-    while (vector_next(&for_iter)) {
-        for_expr** fore = for_iter.x;
-
-        if (strcmp((*fore)->name, x) == 0) {
-            a.res = a_for;
-            a.val.fore = *fore;
-            return a;
-        }
-    }
-
-    unsigned long* idx = map_find(p->substitute_idx, &x);
-    if (idx) {
-        a.res = a_sub;
-        a.val.idx = *idx;
-        return a;
-    }
-
-    id* xid = map_find(&p->mod->ids, &x);
-    if (xid) {
-        a.res = a_id;
-        a.val.id = xid;
-        return a;
-    }
-
-    a.res = a_unbound;
-    return a;
-}
-
-access qualified_access(parser* p, name* n) {
-    if (!n->qualifier) {
-        return unqualified_access(p, n->x);
-    }
-
-    //TODO: qualified ids
-
-    access a;
-    a.res = a_unbound;
-    return a;
-}
-
-//i was going to use this but now it just makes the code harder to read
-typedef enum {left_fail=0, left_fallthrough, left_parsed} left_parse_result;
-
-left_parse_result parse_left_expr(parser* p, left* left, int bind) {
-    left->flags=0;
-
-    if (parse_next_eq(p, t_sub)) left->flags |= left_neg;
-    if (parse_next_eq(p, t_add)) left->flags |= left_add;
-
-    if (parse_next_eq(p, t_for)) {
-        for_expr* fore = heap(sizeof(for_expr));
-        parse_expr(p, &fore->i, 0, 1);
-        
-        if (!try_parse_unqualified(p)) {
-            free(fore);
-            return throw_here(p, "expected name for identifier of for expression");
-        }
-
-        fore->name = p->current.val.name->x;
-
-        if (parse_next_eq(p, t_eq)) {
-            if (!parse_expr(p, &fore->base, 0, 1)) {
-                free(fore); return throw_here(p, "expected base expression");
-            }
-        } else {
-            fore->base.left = left_access;
-            fore->base.apply = unapplied;
-
-            access a = unqualified_access(p, fore->name);
-            if (a.res == a_unbound) {
-                free(fore); return throw_here(p, "implicit reference in base of for expression is not defined");
-            }
-
-            fore->base.val.access = heapcpy(sizeof(access), &a);
-        }
-
-        vector_pushcpy(&p->reducers, &fore);
-
-        if (!parse_expr(p, &fore->x, 0, 1)) {
-            free(fore);
-            return left_fallthrough;
-        }
-
-        vector_pop(&p->reducers);
-
-        x_expr->left = left_for;
-        x_expr->val.fore = fore;
-
-        return left_parsed;
-    }
-
-    if (parse_next_eq(p, t_num)) {
-        x_expr->left = left_num;
-        x_expr->val.num = p->current.val.num;
-    } else if (parse_next_eq(p, t_str)) {
-        x_expr->left = left_str;
-        x_expr->val.str = p->current.val.str;
-    } else if (try_parse_name(p)) {
-        if (bind && !p->current.val.name->qualifier) {
-            x_expr->left = left_bind;
-            map_insertcpy(p->substitute_idx, &p->current.val.name->x, &p->substitute_idx->length);
-            x_expr->val.bind = p->substitute_idx->length; //set value to index
-
-            return left_parsed;
-        }
-
-        access a = qualified_access(p, p->current.val.name);
-
-        x_expr->left = left_access;
-        x_expr->val.access = heapcpy(sizeof(access), &a);
-
-        if (a.res == a_unbound) throw_here(p, "name does not reference an identifier, reducer, or substitute");
-    } else {
-        return left_fallthrough; //not an expression, while zero is failure
-    }
-
-    return left_parsed;
-}
-
-int parse_expr(parser* p, expr* x_expr, int bind, unsigned op_prec) {
-    int lparen = 0;
-    if (parse_next_eq(p, t_paren)) {
-        //parentheses around expression, set base precedence to zero
-        op_prec = 0;
-        lparen = 1;
-    }
-
-    x_expr->left.span.start = parse_peek(p)->s.start;
-    x_expr->substitutes = vector_new(sizeof(expr));
-
-    left_parse_result left = parse_left_expr(p, x_expr, bind);
-
-    if (left==left_fail || left==left_fallthrough) return 0;
-
-    x_expr->left.span.end = p->current.s.end;
-    x_expr->apply = unapplied;
-
-    //parse ops
-    while(1) {
-        if (parse_next_eq(p, t_paren)) {
-            if (lparen) {
-                lparen = 0;
-                x_expr->left.span.end = p->current.s.end; //update span end
-
-                continue;
-            } else {
-                return 1;
-            }
-        }
-
-        token* tok = parse_peek(p);
-        if (!is_name(tok)) { //no op
-            break;
-        }
-
-        id* applier = map_find(&p->mod->ids, &tok->val.name->x); //TODO: qualified appliers
-        unsigned int prec=0;
-
-        if (applier) {
-            prec = applier->precedence;
-
-            x_expr->apply = applied;
-            x_expr->applier.id = applier;
-        } else if (bind) {
-            if (!lparen) return 1; //probably an identifier definition, not ours to bind to
-
-            x_expr->apply = apply_bind;
-            x_expr->applier.bind = tok->val.name;
-        } else {
-            // error depending on binding strength
-            // this allows things like for loop quantities to return after parsing but identifiers to require parsing
-            if (0 < op_prec) return 1;
-            else return throw_here(p, "undefined identifier");
-        }
-    
-        //dont parse any more
-        if (prec < op_prec) break;
-        else parse_next(p); //otherwise increment parser
-
-        //applied already, detach
-        //happens every time after first loop since each loop sets applied
-        if (x_expr->apply != unapplied) {
-            parse_detach(x_expr);
-        }
-
-        if (x_expr->apply == apply_bind) {
-            while (1) {
-                expr* sub = vector_push(&x_expr->substitutes);
-
-                if (!parse_expr(p, sub, bind, prec)) {
-                    vector_pop(&x_expr->substitutes);
-                    break;
-                }
-            }
-        } else {
-            unsigned subs = applier->val.substitutes.length;
-
-            for (unsigned i=0; i<subs; i++) {
-                expr* sub = vector_push(&x_expr->substitutes);
-                parse_expr(p, sub, bind, prec);
-            }
-
-            if (x_expr->substitutes.length != applier->val.substitutes.length) {
-                throw_here(p, isprintf("expected %lu substitutes, got %lu", x_expr->substitutes.length, applier->val.substitutes));
-                note(&applier->substitutes, "defined here");
-            }
-        }
-    }
-
-    return 1;
-}
-
-void print_name(name* n) {
-    if (n->qualifier) printf("%s.", n->qualifier);
-    printf("%s", n->x);
+  parse_mod(&p, &p.fe->global);
 }
 
 void print_expr(expr* e) {
-    if (e->flags & left_neg) printf("-");
-    if (e->flags & left_add) printf("+");
+  printf("(");
 
-    switch (e->left) {
-        case left_num: print_num((num*)e->val.num); break;
-        case left_str: printf("\"%s\"", (char*)e->val.str); break;
-        case left_expr: {
-            printf("("); print_expr((expr*)e->val.expr); printf(")");
-            break;
-        }
-        case left_bind: printf("%s", (char*)e->val.bind); break;
-        case left_access: {
-            switch (e->val.access->res) {
-                case a_unbound: printf("(unbound)");
-                case a_for: printf("%s", e->val.access->val.fore->name);
-                case a_sub: printf("(sub %lu)", e->val.access->val.idx);
-                case a_id: printf("%s", e->val.access->val.id->name);
-            }
+  if (e->kind == exp_invert) {
+	printf("-");
+  }
 
-            break;
-        }
-        case left_for: {
-            printf("for ");
-            print_expr(&e->val.fore->i); printf(" ");
-            printf("%s", e->val.fore->name); printf(" ");
-            print_expr(&e->val.fore->base); printf(" ");
-            print_expr(&e->val.fore->x);
+  if (e->first)
+	print_expr(e->first);
 
-            break;
-        }
-    }
+  switch (e->kind) {
+  case exp_invert: break;
 
-    if (e->apply == apply_bind) {
-        printf(" "); print_name(e->applier.bind); printf(" ");
-    } else if (e->apply == applied) {
-        printf(" "); printf("%s", e->applier.id->name); printf(" ");
-    } else {
-        return;
-    }
+  case exp_add: printf("+");
+	break;
+  case exp_div: printf("/");
+	break;
+  case exp_mul: printf("*");
+	break;
+  case exp_pow: printf("^");
+	break;
 
-    vector_iterator iter = vector_iterate(&e->substitutes);
-    while(vector_next(&iter)) {
-        print_expr(iter.x); printf(" ");
-    }
+  case exp_for: {
+	printf(" for (x=%lu) from ", e->_for.x);
+	print_expr(e->_for.base);
+	printf(", ");
+	print_expr(e->_for.i);
+	printf(" times");
+
+	break;
+  }
+
+  case exp_cond: {
+	printf(" if (x=%lu) ", e->_for.x);
+	print_expr(e->_for.i);
+	printf(" else ");
+	print_expr(e->_for.base);
+
+	break;
+  }
+
+  case exp_def: {
+    printf("where @%lu = ", e->_for.x);
+    print_expr(e->_for.base);
+
+    break;
+  }
+
+  case exp_call: {
+	printf("call ");
+
+	vector_iterator iter = vector_iterate(&e->call.sub.val);
+	while (vector_next(&iter)) {
+	  print_expr(*(expr**)iter.x);
+	  printf(" ");
+	}
+
+	break;
+  }
+  }
+
+  if (binary(e)) {
+	switch (e->ty) {
+	case exp_num: print_num((num*)e->val.by);
+	  break;
+	  //        case : printf("\"%s\"", (char*)e->val.str); break;
+	case exp_inner: {
+	  printf("(");
+	  print_expr((expr*)e->val.inner);
+	  printf(")");
+	  break;
+	}
+	case exp_bind: printf("@%lu", e->val.bind);
+	  break;
+	}
+  }
+
+  printf(")");
 }
 
 void print_module(module* b) {
-    map_iterator x = map_iterate(&b->ids);
-    while (map_next(&x)) {
-        id* xid = *(id**)x.x;
-        printf("%s ", xid->name);
-        
-        vector_iterator iter = vector_iterate(&xid->val.substitutes);
-        while(vector_next(&iter)) {
-            print_expr(iter.x); printf(" ");
-        }
+  map_iterator ids = map_iterate(&b->ids);
+  while (map_next(&ids)) {
+	id* xid = ids.x;
+	printf("%s ", xid->name);
 
-        printf("= ");
+	vector_iterator subs = vector_iterate(&xid->val.substitutes);
+	while (vector_next(&subs)) {
+	  print_expr(*(expr**)subs.x);
+	  printf(" ");
+	}
 
-        print_expr(xid->val.val);
+	printf("= ");
 
-        printf("\n");
-    }
+	print_expr(xid->val.val);
+
+	printf("\n");
+  }
 }

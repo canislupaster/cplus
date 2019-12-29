@@ -1,13 +1,4 @@
-#include "stdint.h"
-#include "stdlib.h"
-#include "string.h"
-
-typedef struct {
-    unsigned long size;
-
-    unsigned long length;
-    char* data;
-} vector;
+#include "vector.h"
 
 vector vector_new(unsigned long size) {
     vector vec = {size, .length=0, .data=NULL};
@@ -77,14 +68,6 @@ void* vector_get(vector* vec, unsigned long i) {
     return vec->data + i*vec->size;
 }
 
-typedef struct {
-    vector* vec;
-
-    unsigned long i;
-    char rev;
-    void* x;
-} vector_iterator;
-
 vector_iterator vector_iterate(vector* vec) {
     vector_iterator iter = {
         vec, .i=0, .rev=0
@@ -99,6 +82,13 @@ int vector_next(vector_iterator* iter) {
 
     if (iter->i > iter->vec->length) return 0;
     else return 1;
+}
+
+void vector_cpy(vector* from, vector* to) {
+  *to = *from;
+
+  to->data = malloc(from->size * from->length);
+  memcpy(to->data, from->data, from->size * from->length);
 }
 
 void vector_free(vector* vec) {

@@ -1,6 +1,6 @@
 #include "stdio.h"
 
-#include "parser.c"
+#include "main.h"
 
 //im using main mostly for temporary parsing tests at this point, like so:
 //im just gonna commit a bunch of checkpoints dont mind me

@@ -1,9 +1,17 @@
 cmake_minimum_required(VERSION 3.14)
 project(cplus)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_C_STANDARD 11)
 
-add_executable(cplus src/main.c)
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+    add_compile_definitions(BUILD_DEBUG)
+endif()
+
+add_custom_target(headers ALL /bin/sh cmake-headers.sh WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+file(GLOB SRC ./src/*.c ./src/*.h)
+add_executable(cplus ${SRC})
+add_dependencies(cplus headers)
 
 enable_testing()
 add_executable(hashtable_test tests/hashtable_test.c)
