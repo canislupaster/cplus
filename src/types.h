@@ -121,13 +121,9 @@ typedef struct exp_idx {
   unsigned long i; //index of substitute
 } exp_idx;
 
-typedef struct {
-  exp_idx where;
-} sub_cond;
-
 /// substituted in reverse
 typedef struct {
-  vector condition; //condition of substitution
+  vector condition; //vec of sub_conds
   vector val; //expression for every substitute indexes
 } substitution;
 
@@ -142,18 +138,18 @@ struct expr {
   enum {
 	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
 	//a conditional is a for expressed without the base, def is a for if i=1
-	exp_cond, exp_def, exp_for, exp_call //2-3 args
+		exp_cond, exp_def, exp_for, exp_call //2-3 args
   } kind;
 
   union {
 	struct {
 	  enum {
-		exp_bind, exp_num, exp_inner
+
 	  } ty;
 	  union {
-		num *by;
+		num* by;
 		unsigned long bind;
-		struct expr *inner;
+		struct expr* inner;
 	  } val;
 	};
 
@@ -171,6 +167,11 @@ struct expr {
 	} call;
   };
 };
+
+typedef struct {
+  unsigned int x;
+  struct expr what;
+} sub_cond;
 
 /// identifier or expr (empty vec and map)
 typedef struct value {
@@ -226,3 +227,11 @@ typedef struct {
   map* substitute_idx;
   vector reducers;
 } parser;
+
+typedef struct {
+  frontend* fe;
+  module* mod;
+
+  map scope;
+  substitution* sub;
+} evaluator;

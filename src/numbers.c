@@ -20,18 +20,13 @@ num ONE = {.ty = num_integer, .integer = 1};
 int num_eq(num num1, num num2) {
   commute(&num1, &num2);
 
-  if (num1.ty == num_decimal) return num1.decimal == num2.decimal;
-  else return num1.uint == num2.uint;
+  if (num1.ty == num_decimal)
+	return num1.decimal == num2.decimal;
+  else
+	return num1.uint == num2.uint;
 }
 
-int num_gt(num num1, num than) {
-  commute(&num1, &than);
-
-  if (num1.ty == num_decimal) return num1.decimal > than.decimal;
-  else return num1.uint > than.uint;
-}
-
-num mul(num num1, num num2) {
+num num_mul(num num1, num num2) {
   commute(&num1, &num2);
 
   num res = {.ty = num1.ty};
@@ -69,7 +64,7 @@ num num_pow(num num1, num num2) {
   return res;
 }
 
-num add(num num1, num num2) {
+num num_add(num num1, num num2) {
   commute(&num1, &num2);
 
   num res = {.ty = num1.ty};
@@ -82,10 +77,12 @@ num add(num num1, num num2) {
   return res;
 }
 
-num invert(num n) {
+num num_invert(num n) {
   num res = n;
-  if (res.ty == num_decimal) res.decimal = -res.decimal;
-  else res.integer = -res.integer;
+  if (res.ty == num_decimal)
+	res.decimal = -res.decimal;
+  else
+	res.integer = -res.integer;
 
   return res;
 }

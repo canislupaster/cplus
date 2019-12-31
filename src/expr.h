@@ -6,6 +6,13 @@
 #include "math.h"
 #include "string.h"
 typedef struct {
+  unsigned long size;
+
+  unsigned long length;
+  char* data;
+} vector;
+void vector_free(vector* vec);
+typedef struct {
   enum {
 	num_decimal,
 	num_integer,
@@ -17,19 +24,18 @@ typedef struct {
 	long double decimal;
   };
 } num;
-num* num_new(num x);
+void print_num(num* n);
 typedef struct expr expr;
+void print_expr(expr* exp);
+int remove_num(expr** eref, num* num);
+void expr_free(expr* exp);
+void expr_head_free(expr* exp);
+expr* extract_operand(expr* exp, unsigned long x1);
+int binding_exists(expr* exp, unsigned long x);
 typedef struct {
   char* start;
   char* end;
 } span;
-int cost(expr* e);
-typedef struct {
-  unsigned long size;
-
-  unsigned long length;
-  char* data;
-} vector;
 typedef struct {
   unsigned long key_size;
   unsigned long size;
@@ -69,6 +75,9 @@ typedef struct {
   vector condition; //condition of substitution
   vector val; //expression for every substitute indexes
 } substitution;
+int substitute(expr* exp, substitution* sub);
+int num_eq(num num1, num num2);
+int cost(expr* e);
 typedef struct exp_idx exp_idx;
 typedef enum {
   move_left, move_right,
@@ -127,14 +136,63 @@ struct expr {
 	} call;
   };
 };
-void set_num(expr* e, num n);
-num num_invert(num n);
-num num_add(num num1, num num2);
-num num_pow(num num1, num num2);
-num num_div(num num1, num num2);
-num num_mul(num num1, num num2);
-int num_eq(num num1, num num2);
-extern num ONE;
-extern num ZERO;
-void commute(num* num1, num* num2);
-void convert_dec(num* n);
+typedef struct {
+  unsigned int x;
+  struct expr what;
+} sub_cond;
+void* vector_pushcpy(vector* vec, void* x);
+void* vector_get(vector* vec, unsigned long i);
+expr* goto_idx(expr* root, exp_idx* where);
+exp_idx* descend_i(exp_idx* start, move_kind kind, unsigned long i);
+exp_idx* descend(exp_idx* start, move_kind kind);
+void exp_rename(expr* exp, unsigned offset);
+typedef struct {
+  vector* vec;
+
+  unsigned long i;
+  char rev;
+  void* x;
+} vector_iterator;
+int vector_next(vector_iterator* iter);
+vector_iterator vector_iterate(vector* vec);
+void vector_cpy(vector* from, vector* to);
+void* heapcpy(size_t size, const void* val);
+expr* exp_copy(expr* exp);
+int binary(expr* exp);
+int is_value(expr* exp);
+typedef enum {
+  t_name, t_non_bind,
+  t_add, t_sub,
+  t_ellipsis, t_comma,
+  t_in, t_for,
+  t_eq, t_lparen, t_rparen,
+  t_str, t_num,
+  t_sync, t_eof
+} token_type;
+typedef struct {
+  char* qualifier;
+  char* x;
+} name;
+typedef struct {
+  token_type tt;
+  span s;
+
+  union {
+	name* name;
+	char* str;
+	num* num;
+  } val;
+} token;
+typedef struct {
+  frontend* fe;
+  token current;
+
+  unsigned long pos;
+
+  module* mod;
+  map* substitute_idx;
+  vector reducers;
+} parser;
+expr* expr_new_p(parser* p, expr* first);
+void* heap(size_t size);
+expr* expr_new(expr* first);

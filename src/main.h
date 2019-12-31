@@ -42,7 +42,8 @@ typedef struct {
   /// tells whether to continue into codegen
   char errored;
 }frontend;
-void frontend_free(frontend *fe);
+void evaluate_main(frontend* fe);
+void frontend_free(frontend* fe);
 void print_module(module *b);
 void parse(frontend *fe);
 void lex(frontend *fe);

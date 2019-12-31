@@ -9,12 +9,12 @@
 #endif //WINDOWS_INC
 
 void set_col(FILE* f, char color) {
-    DWORD output;
-    if (f==stdout) output = STD_OUTPUT_HANDLE;
-    else if (f==stderr) output = STD_ERROR_HANDLE;
-    else return;
+	DWORD output;
+	if (f==stdout) output = STD_OUTPUT_HANDLE;
+	else if (f==stderr) output = STD_ERROR_HANDLE;
+	else return;
 
-    SetConsoleTextAttribute(GetStdHandle(output), (unsigned)color);
+	SetConsoleTextAttribute(GetStdHandle(output), (unsigned)color);
 }
 
 #else // WINDOWS

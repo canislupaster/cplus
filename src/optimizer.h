@@ -6,31 +6,6 @@
 #include "math.h"
 #include "string.h"
 typedef struct {
-  enum {
-	num_decimal,
-	num_integer,
-  } ty;
-
-  union {
-	uint64_t uint;
-	int64_t integer;
-	long double decimal;
-  };
-} num;
-num* num_new(num x);
-typedef struct expr expr;
-typedef struct {
-  char* start;
-  char* end;
-} span;
-int cost(expr* e);
-typedef struct {
-  unsigned long size;
-
-  unsigned long length;
-  char* data;
-} vector;
-typedef struct {
   unsigned long key_size;
   unsigned long size;
   /// hash and compare
@@ -42,6 +17,47 @@ typedef struct {
   unsigned long num_buckets;
   char* buckets;
 } map;
+void map_configure_ulong_key(map* map, unsigned long size);
+map map_new();
+typedef struct expr expr;
+expr* extract_operand(expr* exp, unsigned long x1);
+void* map_find(map* map, void* key);
+typedef struct {
+  enum {
+	num_decimal,
+	num_integer,
+  } ty;
+
+  union {
+	uint64_t uint;
+	int64_t integer;
+	long double decimal;
+  };
+} num;
+int num_eq(num num1, num num2);
+void reduce(expr** exp);
+extern num ZERO;
+extern num ONE;
+int remove_num(expr** eref, num* num);
+num num_pow(num num1, num num2);
+num num_div(num num1, num num2);
+num num_mul(num num1, num num2);
+num num_add(num num1, num num2);
+void set_num(expr* e, num n);
+void expr_free(expr* exp);
+num num_invert(num n);
+num* num_new(num x);
+expr* expr_new(expr* first);
+typedef struct {
+  unsigned long size;
+
+  unsigned long length;
+  char* data;
+} vector;
+typedef struct {
+  char* start;
+  char* end;
+} span;
 typedef struct {
   map ids;
 } module;
@@ -81,6 +97,23 @@ struct exp_idx {
   unsigned long i; //index of substitute
 };
 int bind(expr* from, expr* to, substitution* sub, exp_idx* cursor);
+typedef struct {
+  void* val;
+  char exists;
+} map_insert_result;
+map_insert_result map_insert(map* map, void* key);
+int binary(expr* exp);
+int is_value(expr* exp);
+typedef struct {
+  vector* vec;
+
+  unsigned long i;
+  char rev;
+  void* x;
+} vector_iterator;
+int vector_next(vector_iterator* iter);
+vector_iterator vector_iterate(vector* vec);
+int cost(expr* e);
 typedef struct value value;
 struct value {
   vector substitutes;
@@ -127,14 +160,4 @@ struct expr {
 	} call;
   };
 };
-void set_num(expr* e, num n);
-num num_invert(num n);
-num num_add(num num1, num num2);
-num num_pow(num num1, num num2);
-num num_div(num num1, num num2);
-num num_mul(num num1, num num2);
-int num_eq(num num1, num num2);
-extern num ONE;
-extern num ZERO;
-void commute(num* num1, num* num2);
-void convert_dec(num* n);
+extern const int CALL_COST;

@@ -5,14 +5,22 @@
 //im using main mostly for temporary parsing tests at this point, like so:
 //im just gonna commit a bunch of checkpoints dont mind me
 int main(int argc, char** argv) {
-    frontend fe = make_frontend("test.c+");
+  frontend fe = make_frontend("test.c+");
 
-    lex(&fe);
-    parse(&fe);
-    // validate(&fe);
-    if (!fe.errored) print_module(&fe.global);
+  lex(&fe);
+//  vector_iterator iter = vector_iterate(&fe.tokens);
+//  while (vector_next(&iter)) {
+//	char* s = spanstr(&((token*)iter.x)->s);
+//	printf(" %s ", s);
+//  }
+  parse(&fe);
 
-    frontend_free(&fe);
+  if (!fe.errored)
+	print_module(&fe.global);
 
-    return 0;
+  frontend_free(&fe);
+
+  evaluate_main(&fe.global);
+
+  return 0;
 }

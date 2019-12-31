@@ -6,31 +6,6 @@
 #include "math.h"
 #include "string.h"
 typedef struct {
-  enum {
-	num_decimal,
-	num_integer,
-  } ty;
-
-  union {
-	uint64_t uint;
-	int64_t integer;
-	long double decimal;
-  };
-} num;
-num* num_new(num x);
-typedef struct expr expr;
-typedef struct {
-  char* start;
-  char* end;
-} span;
-int cost(expr* e);
-typedef struct {
-  unsigned long size;
-
-  unsigned long length;
-  char* data;
-} vector;
-typedef struct {
   unsigned long key_size;
   unsigned long size;
   /// hash and compare
@@ -42,6 +17,38 @@ typedef struct {
   unsigned long num_buckets;
   char* buckets;
 } map;
+void map_configure_ulong_key(map* map, unsigned long size);
+map map_new();
+typedef struct id id;
+typedef struct {
+  char* start;
+  char* end;
+} span;
+typedef struct {
+  char* qualifier;
+  char* x;
+} name;
+typedef struct value value;
+typedef struct {
+  unsigned long size;
+
+  unsigned long length;
+  char* data;
+} vector;
+typedef struct expr expr;
+struct value {
+  vector substitutes;
+  map substitute_idx;
+
+  struct expr* val;
+};
+struct id {
+  span s;
+  char* name;
+  value val;
+  span substitutes;
+  unsigned precedence;
+};
 typedef struct {
   map ids;
 } module;
@@ -57,6 +64,20 @@ typedef struct {
   /// tells whether to continue into codegen
   char errored;
 } frontend;
+void evaluate_main(frontend* fe);
+int cost(expr* e);
+typedef struct {
+  enum {
+	num_decimal,
+	num_integer,
+  } ty;
+
+  union {
+	uint64_t uint;
+	int64_t integer;
+	long double decimal;
+  };
+} num;
 typedef struct {
   frontend* fe;
   module* mod;
@@ -81,13 +102,6 @@ struct exp_idx {
   unsigned long i; //index of substitute
 };
 int bind(expr* from, expr* to, substitution* sub, exp_idx* cursor);
-typedef struct value value;
-struct value {
-  vector substitutes;
-  map substitute_idx;
-
-  struct expr* val;
-};
 struct expr {
   span s;
 
@@ -127,14 +141,36 @@ struct expr {
 	} call;
   };
 };
-void set_num(expr* e, num n);
+typedef struct {
+  unsigned int x;
+  struct expr what;
+} sub_cond;
 num num_invert(num n);
-num num_add(num num1, num num2);
 num num_pow(num num1, num num2);
 num num_div(num num1, num num2);
 num num_mul(num num1, num num2);
+num num_add(num num1, num num2);
+num* num_new(num x);
+int binary(expr* exp);
+int map_remove(map* map, void* key);
+typedef struct {
+  void* val;
+  char exists;
+} map_insert_result;
+map_insert_result map_insertcpy(map* map, void* key, void* v);
+int throw(const span* s, const char* x);
 int num_eq(num num1, num num2);
-extern num ONE;
-extern num ZERO;
-void commute(num* num1, num* num2);
-void convert_dec(num* n);
+typedef struct {
+  vector* vec;
+
+  unsigned long i;
+  char rev;
+  void* x;
+} vector_iterator;
+int vector_next(vector_iterator* iter);
+vector_iterator vector_iterate(vector* vec);
+int evaluate(evaluator* ev, expr* exp, expr* out);
+expr rhs(evaluator* ev, expr* exp);
+void* map_find(map* map, void* key);
+void* vector_get(vector* vec, unsigned long i);
+expr ev_unqualified_access(evaluator* ev, unsigned int x);
