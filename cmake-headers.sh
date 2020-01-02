@@ -1,1 +1,1 @@
-makeheaders ./src/*.[ch]
+makeheaders ./src/*.[ch] ./interactive/*.[ch] ./playground/*.[ch]

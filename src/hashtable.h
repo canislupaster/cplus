@@ -6,23 +6,25 @@
 #include "math.h"
 #include "string.h"
 typedef struct {
-  unsigned long key_size;
-  unsigned long size;
-  /// hash and compare
-  uint64_t (* hash)(void*);
-  /// compare(&left, &right)
-  int (* compare)(void*, void*);
+	unsigned long key_size;
+	unsigned long size;
 
-  unsigned long length;
-  unsigned long num_buckets;
-  char* buckets;
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
 }map;
 void map_free(map *map);
 int map_remove(map *map,void *key);
 void map_cpy(map *from,map *to);
 typedef struct {
-  void* val;
-  char exists;
+	void* val;
+	char exists;
 }map_insert_result;
 map_insert_result map_insertcpy(map *map,void *key,void *v);
 map_insert_result map_insert(map *map,void *key);
@@ -31,18 +33,18 @@ void *map_find(map *map,void *key);
 extern const uint16_t MAP_PROBE_EMPTY;
 #define CONTROL_BYTES 16
 typedef struct {
-  uint8_t control_bytes[CONTROL_BYTES];
+	uint8_t control_bytes[CONTROL_BYTES];
 }bucket;
 typedef struct {
-  map* map;
+	map* map;
 
-  char c;
-  unsigned long bucket;
+	char c;
+	unsigned long bucket;
 
-  void* key;
-  void* x;
-  char current_c;
-  bucket* bucket_ref;
+	void* key;
+	void* x;
+	char current_c;
+	bucket* bucket_ref;
 }map_iterator;
 int map_next(map_iterator *iterator);
 map_iterator map_iterate(map *map);

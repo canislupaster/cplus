@@ -20,7 +20,7 @@ void set_col(FILE* f, char color) {
 #else // WINDOWS
 
 void set_col(FILE* f, char color) {
-  fprintf(f, "\x1b[%im", (char)color);
+	fprintf(f, "\x1b[%im", (char) color);
 }
 
 #endif // WINDOWS

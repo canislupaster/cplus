@@ -26,13 +26,13 @@
 //#else // WINDOWS
 
 enum TERM_COLORS {
-  RESET = 0,
-  BLACK = 30,
-  RED, GREEN,
-  YELLOW, BLUE,
-  MAGENTA, CYAN,
-  GRAY,
-  WHITE = 97
+	RESET = 0,
+	BLACK = 30,
+	RED, GREEN,
+	YELLOW, BLUE,
+	MAGENTA, CYAN,
+	GRAY,
+	WHITE = 97
 };
 
 //#endif // WINDOWS
