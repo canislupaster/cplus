@@ -341,7 +341,7 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 					}
 				}
 
-				if (sub->val.length != val->substitutes.length) {
+				if (sub->val.length != val->groups.length) {
 					if (only) {
 						throw_here(p,
 											 isprintf("expected %lu substitutes, got %lu",
@@ -399,7 +399,7 @@ int parse_id(parser* p) {
 	p->reducers = vector_new(sizeof(reducer));
 
 	val.groups = vector_new(sizeof(sub_group));
-	val.substitutes = vector_new(sizeof(expr*));
+	val.substitutes = vector_new(sizeof(sub_idx));
 	val.substitute_idx = map_new();
 
 	//maps binds name to index for unbiased comparison of ids
@@ -412,7 +412,6 @@ int parse_id(parser* p) {
 		expr* exp = parse_expr(p, 1, 1);
 		if (exp) {
 			reduce(&exp);
-			vector_pushcpy(&val.substitutes, &exp);
 
 			gen_condition(&val, exp, 0);
 			gen_substitutes(&val, exp, 0);
@@ -445,7 +444,6 @@ int parse_id(parser* p) {
 		expr* exp = parse_expr(p, 1, 1);
 		if (exp) {
 			reduce(&exp);
-			vector_pushcpy(&val.substitutes, &exp);
 			//generation phase
 			gen_condition(&val, exp, i++);
 			gen_substitutes(&val, exp, i++);

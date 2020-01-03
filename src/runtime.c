@@ -25,8 +25,9 @@ int ev_condition(evaluator* ev, substitution* sub, unsigned long i) {
 	expr exp = **(expr**) vector_get(&sub->val, i);
 
 	do {
-		condition(sub, i, &exp);
-	} while (evaluate(ev, &exp, &exp));
+		if (condition(sub, i, &exp)) return 1;
+		evaluate(ev, &exp, &exp);
+	} while (!is_literal(&exp));
 
 	return 0;
 }
@@ -97,9 +98,8 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 
 			int satisfactory = 1; //satisfies conditions
 
-			vector_iterator iter_groups = vector_iterate(&sub->to->groups);
-			while (vector_next(&iter_groups)) {
-				if (!ev_condition(ev, sub, iter_groups.i)) {
+			for (unsigned long i = 0; i < sub->to->groups.length; i++) {
+				if (!ev_condition(ev, sub, i)) {
 					satisfactory = 0;
 					break;
 				}
@@ -107,28 +107,34 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 
 			if (!satisfactory) break;
 
-			//set current substitution state
-			for (unsigned long i = 0; i < sub->to->substitutes.length; i++) {
-				vector_pushcpy(&ev->sub, get_sub(sub, i));
+			//if there exists an equivalent expression, insert substitutes and evaluate expression
+			if (sub->to->exp) {
+				//set current substitution state
+				for (unsigned long i = 0; i < sub->to->substitutes.length; i++) {
+					vector_pushcpy(&ev->sub, get_sub(sub, i));
+				}
+
+				ev->stack_offset += sub->to->substitutes.length;
+
+				//copy and rename by stack offset
+				*out = exp_copy_value(sub->to->exp);
+				exp_rename(out, 0, ev->stack_offset);
+			} else {
+				//otherwise just return call as literal
+				*out = exp_copy_value(exp);
 			}
-
-			ev->stack_offset += sub->to->substitutes.length;
-
-			//copy and rename by stack offset
-			*out = *exp_copy(sub->to->exp);
-			exp_rename(out, 0, ev->stack_offset);
 
 			return 1;
 		}
 
 		return throw(&exp->s,
-								 "does not satisfy any of the callee's conditions"); //does not satisfy any of the conditions
+								 "does not satisfy any of the callee's conditions");
 
 	} else if (is_value(exp)) {
 
 		switch (exp->kind) {
 			case exp_bind: return evaluate(ev, ev_unqualified_access(ev, exp->bind), out);
-			default: *out = *exp;
+			default: *out = exp_copy_value(exp);
 				break;
 		}
 

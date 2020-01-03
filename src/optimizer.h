@@ -104,7 +104,6 @@ struct expr {
 };
 
 void reduce(expr** exp);
-
 typedef struct value value;
 struct value {
 	span s;

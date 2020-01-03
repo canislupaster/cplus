@@ -130,7 +130,6 @@ void id_free(id* xid);
 typedef struct expr expr;
 
 int cost(expr* exp);
-
 enum kind {
 	exp_bind, exp_num,
 	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args

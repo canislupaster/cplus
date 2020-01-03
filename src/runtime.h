@@ -87,7 +87,6 @@ struct expr {
 };
 
 void print_expr(expr* exp);
-
 typedef struct {
 	unsigned long key_size;
 	unsigned long size;
@@ -159,7 +158,7 @@ int is_value(expr* exp);
 
 void exp_rename(expr* exp, unsigned threshold, unsigned offset);
 
-expr* exp_copy(expr* exp);
+expr exp_copy_value(expr* exp);
 
 typedef struct {
 	struct value* to;

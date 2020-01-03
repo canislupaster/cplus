@@ -196,6 +196,8 @@ void vector_cpy(vector* from, vector* to);
 
 expr* exp_copy(expr* exp);
 
+expr exp_copy_value(expr* exp);
+
 typedef struct expr_iterator expr_iterator;
 struct expr_iterator {
 	expr* root;

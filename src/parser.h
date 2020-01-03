@@ -87,7 +87,6 @@ struct expr {
 };
 
 void print_expr(expr* exp);
-
 typedef struct {
 	unsigned long key_size;
 	unsigned long size;
@@ -124,7 +123,6 @@ typedef struct {
 	map ids;
 } module;
 void print_module(module *b);
-
 typedef struct {
 	char* file;
 	span s;
@@ -192,6 +190,23 @@ void map_configure_string_key(map* map, unsigned long size);
 
 map map_new();
 
+typedef struct sub_idx sub_idx;
+typedef struct exp_idx exp_idx;
+typedef enum {
+	move_left, move_right, move_inner,
+	move_for_i, move_for_base, move_for_step,
+	move_call_i
+} move_kind;
+struct exp_idx {
+	struct exp_idx* from;
+	move_kind kind;
+	unsigned long i; //index of value
+	unsigned long i2; //index of substitute
+};
+struct sub_idx {
+	unsigned int i;
+	exp_idx* idx;
+};
 typedef struct sub_group sub_group;
 typedef struct {
 	struct value* to;

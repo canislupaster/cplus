@@ -233,35 +233,38 @@ int exp_next(expr_iterator* iter) {
 	return 1;
 }
 
-expr* exp_copy(expr* exp) {
-	expr* new_exp = heapcpy(sizeof(expr), exp);
-	*new_exp = *exp;
+//copies expression by value
+expr exp_copy_value(expr* exp) {
+	expr new_exp = *exp;
 
 	if (binary(exp)) {
-		new_exp->binary.left = exp_copy(exp->binary.left);
-		new_exp->binary.right = exp_copy(exp->binary.right);
+		new_exp.binary.left = exp_copy(exp->binary.left);
+		new_exp.binary.right = exp_copy(exp->binary.right);
 	}
 
-	switch (new_exp->kind) {
+	switch (new_exp.kind) {
 		case exp_cond:
 		case exp_def:
 		case exp_for: {
-			new_exp->_for.i = exp_copy(new_exp->_for.i);
-			new_exp->_for.base = exp_copy(new_exp->_for.base);
-			new_exp->_for.step = exp_copy(new_exp->_for.step);
+			new_exp._for.i = exp_copy(new_exp._for.i);
+			new_exp._for.base = exp_copy(new_exp._for.base);
+			new_exp._for.step = exp_copy(new_exp._for.step);
 
 			break;
 		}
 		case exp_call: {
-			vector_cpy(&exp->call.sub, &new_exp->call.sub);
-			vector_iterator vals = vector_iterate(&new_exp->call.sub);
+			vector_cpy(&exp->call.sub, &new_exp.call.sub);
+			vector_iterator vals = vector_iterate(&new_exp.call.sub);
 			while (vector_next(&vals)) {
-				substitution* sub = vals.x;
-				vector_cpy(&sub->val, &sub->val);
+				substitution* sub = vector_get(&exp->call.sub, vals.i - 1);
+				substitution* new_sub = vals.x;
 
-				vector_iterator iter = vector_iterate(&sub->val);
+				vector_cpy(&sub->val, &new_sub->val);
+
+				vector_iterator iter = vector_iterate(&new_sub->val);
 				while (vector_next(&iter)) {
-					*(expr**) iter.x = exp_copy(*(expr**) iter.x);
+					expr* old_exp = *(expr**) iter.x;
+					*(expr**) iter.x = exp_copy(old_exp);
 				}
 			}
 
@@ -271,6 +274,11 @@ expr* exp_copy(expr* exp) {
 	}
 
 	return new_exp;
+}
+
+expr* exp_copy(expr* exp) {
+	expr new_exp = exp_copy_value(exp);
+	return heapcpy(sizeof(expr), &new_exp);
 }
 
 /// uniquely renames identifiers in loops n stuff >= the specified threshold
