@@ -1,6 +1,5 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>

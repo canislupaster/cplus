@@ -241,7 +241,7 @@ frontend make_frontend() {
 void value_free(value* val) {
 	vector_free(&val->substitutes);
 	map_free(&val->substitute_idx);
-	expr_free(val->val);
+	expr_free(val->exp);
 }
 
 void id_free(id* xid) {

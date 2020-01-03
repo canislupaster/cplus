@@ -17,7 +17,19 @@ expr* expr_new_p(parser* p, expr* first) {
 	return x;
 }
 
+void call_new(expr* exp, id* i) {
+	exp->kind = exp_call;
+
+	exp->call.sub = vector_new(sizeof(substitution));
+	exp->call.to = i;
+}
+
 //CLASSIFIERS
+
+//FULLY EVALUATED?
+int is_literal(expr* exp) {
+	return exp->kind == exp_num;
+}
 
 int is_value(expr* exp) {
 	return exp->kind == exp_num || exp->kind == exp_bind;
@@ -43,9 +55,10 @@ exp_idx* descend(exp_idx* start, move_kind kind) {
 	return new;
 }
 
-exp_idx* descend_i(exp_idx* start, move_kind kind, unsigned long i) {
+exp_idx* descend_i(exp_idx* start, move_kind kind, unsigned long i, unsigned long i2) {
 	exp_idx* new = descend(start, kind);
 	new->i = i;
+	new->i2 = i2;
 
 	return new;
 }
@@ -66,7 +79,10 @@ expr* goto_idx(expr* root, exp_idx* where) {
 		case move_for_base: return root->_for.base;
 		case move_for_i: return root->_for.i;
 
-		case move_call_i: return *(expr**) vector_get(&root->call.sub.val, where->i);
+		case move_call_i: {
+			substitution* sub = vector_get(&root->call.sub, where->i);
+			return *(expr**) vector_get(&sub->val, where->i2);
+		}
 	}
 }
 
@@ -118,16 +134,73 @@ void exp_ascend(expr_iterator* iter) {
 			break;
 		}
 		case exp_call: {
-			if (*last == up->call.sub.val.length) {
+
+			if (*last == up->call.sub.length) {
+				vector_pop(&iter->sub_done); //pop both indices
 				vector_pop(&iter->sub_done);
+
 				return exp_ascend(iter);
 			} else {
-				*last = *last + 1; //assign to reference
-				iter->cursor = descend_i(iter->cursor, move_call_i, *last);
+				substitution* sub = vector_get(&up->call.sub, *last);
+
+				unsigned long* last2 = vector_get(&iter->sub_done, iter->sub_done.length - 2);
+				if (*last2 == sub->val.length) {
+					*last = *last + 1; //assign to reference
+				} else {
+					*last2 = *last2 + 1;
+				}
+
+				iter->cursor = descend_i(iter->cursor, move_call_i, *last, *last2);
 			}
 		}
 
 		default:;
+	}
+}
+
+int exp_get(expr_iterator* iter) {
+	if (iter->done) return 0;
+
+	expr* this = goto_idx(iter->root, iter->cursor);
+	iter->x = this;
+
+	return 1;
+}
+
+void exp_go(expr_iterator* iter) {
+	//leaf, ascend
+	if (is_value(iter->x)) {
+		exp_ascend(iter);
+	} else if (unary(iter->x)) {
+		iter->cursor = descend(iter->cursor, move_inner);
+	} else {
+		unsigned long init = 0;
+		vector_pushcpy(&iter->sub_done, &init);
+
+		if (binary(iter->x)) {
+			iter->cursor = descend(iter->cursor, move_left);
+		}
+
+		switch (iter->x->kind) {
+			case exp_cond:
+			case exp_def:
+			case exp_for: {
+				iter->cursor = descend(iter->cursor, move_for_step);
+				break;
+			}
+			case exp_call: {
+
+				if (((substitution*) vector_get(&iter->x->call.sub, 0))->val.length == 0) {
+					vector_pop(&iter->sub_done); //undo insertion
+					exp_ascend(iter);
+				} else {
+					vector_pushcpy(&iter->sub_done, &init); //push again
+					iter->cursor = descend_i(iter->cursor, move_call_i, 0, 0);
+				}
+			}
+
+			default:;
+		}
 	}
 }
 
@@ -137,38 +210,7 @@ int exp_next(expr_iterator* iter) {
 	expr* this = goto_idx(iter->root, iter->cursor);
 	iter->x = this;
 
-	//leaf, ascend
-	if (is_value(this)) {
-		exp_ascend(iter);
-	} else if (unary(this)) {
-		iter->cursor = descend(iter->cursor, move_inner);
-	} else {
-		unsigned long init = 0;
-		vector_pushcpy(&iter->sub_done, &init);
-
-		if (binary(this)) {
-			iter->cursor = descend(iter->cursor, move_left);
-		}
-
-		switch (this->kind) {
-			case exp_cond:
-			case exp_def:
-			case exp_for: {
-				iter->cursor = descend(iter->cursor, move_for_step);
-				break;
-			}
-			case exp_call: {
-				if (this->call.sub.val.length == 0) {
-					vector_pop(&iter->sub_done); //undo insertion
-					exp_ascend(iter);
-				} else
-					iter->cursor = descend_i(iter->cursor, move_call_i, 0);
-			}
-
-			default:;
-		}
-	}
-
+	exp_go(iter);
 
 	return 1;
 }
@@ -193,13 +235,19 @@ expr* exp_copy(expr* exp) {
 			break;
 		}
 		case exp_call: {
-			vector_cpy(&exp->call.sub.condition, &new_exp->call.sub.condition);
-			vector_cpy(&exp->call.sub.val, &new_exp->call.sub.val);
+			vector_cpy(&exp->call.sub, &new_exp->call.sub);
+			vector_iterator vals = vector_iterate(&new_exp->call.sub);
+			while (vector_next(&vals)) {
+				substitution* sub = vals.x;
+				vector_cpy(&sub->condition, &sub->condition);
+				vector_cpy(&sub->val, &sub->val);
 
-			vector_iterator iter = vector_iterate(&new_exp->call.sub.val);
-			while (vector_next(&iter)) {
-				*(expr**) iter.x = exp_copy(*(expr**) iter.x);
+				vector_iterator iter = vector_iterate(&sub->val);
+				while (vector_next(&iter)) {
+					*(expr**) iter.x = exp_copy(*(expr**) iter.x);
+				}
 			}
+
 		}
 
 		default:;
@@ -221,6 +269,40 @@ void exp_rename(expr* exp, unsigned threshold, unsigned offset) {
 	}
 }
 
+void gen_condition(value* val, unsigned int i) {
+	expr_iterator iter = exp_iter(val->exp);
+	while (!iter.done) {
+		exp_get(&iter);
+
+		sub_cond cond = {.i=i, .idx=*iter.cursor};
+
+		//insert expression to check if literal, otherwise checking the kind is enough
+		if (is_literal(iter.x)) {
+			cond.exp = iter.x;
+			vector_pushcpy(&val->condition, &cond);
+		} else {
+			cond.exp = NULL;
+			cond.kind = iter.x->kind;
+			vector_pushcpy(&val->condition, &cond);
+		}
+
+		exp_go(&iter);
+	}
+}
+
+void gen_substitutes(value* val, unsigned int i) {
+	expr_iterator iter = exp_iter(val->exp);
+	while (!iter.done) {
+		exp_get(&iter);
+
+		if (iter.x->kind == exp_bind) {
+			vector_setcpy(&val->substitutes, iter.x->bind, &(sub_idx) {.idx = *iter.cursor, .i=i});
+		}
+
+		exp_go(&iter);
+	}
+}
+
 int bind(expr* from, expr* to, substitution* sub) {
 	if (binary(from) && binary(to)) {
 		if (from->kind != to->kind)
@@ -232,44 +314,63 @@ int bind(expr* from, expr* to, substitution* sub) {
 			return 0;
 	} else if (to->kind == exp_bind) {
 		vector_pushcpy(&sub->val, &from);
-	} else if (from->kind == exp_bind) { //make sure from == to at runtime
-		vector_pushcpy(&sub->condition,
-									 &(sub_cond) {.what=to, .x = from->bind});
+	} else if (from->kind == exp_bind) { //make sure from == to at runtime (and do bind if necessary)
+		sub_cond cond = {.from=from, .to=to};
+		vector_pushcpy(&sub->condition, &cond);
 	} else {
-		if (to->kind != from->kind)
-			return 0;
+		sub_cond cond = {.from=from, .to=to};
+		vector_pushcpy(&sub->condition, &cond);
 
-		switch (from->kind) {
-			case exp_call: {
-				if (from->call.to != to->call.to)
-					return 0;
+//		if (to->kind != from->kind)
+//			return 0;
 
-				vector_iterator iter = vector_iterate(&from->call.sub.val);
-				while (vector_next(&iter)) {
-					expr* exp_2 = *(expr**) vector_get(&to->call.sub.val, iter.i - 1);
-					if (!exp_2)
-						return 0;
-
-					if (!bind(iter.x, exp_2, sub))
-						return 0;
-				}
-			}
-
-			case exp_cond:
-			case exp_def:
-			case exp_for: {
-				//x should always be the same, match on base and i
-				if (!bind(from->_for.step, to->_for.step, sub)
-						|| !bind(from->_for.base, to->_for.base, sub)
-						|| !bind(from->_for.i, to->_for.i, sub))
-					return 0;
-
-				break;
-			}
-
-			case exp_invert: break;
-			default:;
-		}
+//		switch (from->kind) {
+//			case exp_call: {
+//				if (from->call.to != to->call.to)
+//					return 0;
+//
+//				vector_iterator iter = vector_iterate(&from->call.sub);
+//				while (vector_next(&iter)) {
+//					substitution* from_sub = iter.x;
+//					//search for matching value
+//					vector_iterator iter_to = vector_iterate(&to->call.sub);
+//					while (vector_next(&iter_to)) {
+//						substitution* to_sub = iter_to.x;
+//						if (to_sub->to != from_sub->to) continue;
+//						//substitute
+//						vector_iterator iter_sub = vector_iterate(&from_sub->val);
+//						while (vector_next(&iter_sub)) {
+//
+//						}
+//						expr* exp_2 = *(expr**) vector_get(&to->call.sub.val, iter.i - 1);
+//						if (!exp_2)
+//							return 0;
+//
+//						if (!bind(iter.x, exp_2, sub))
+//							return 0;
+//					}
+//				}
+//
+//				//insert condition to ensure that conditions of both calls intersect
+//				sub_cond cond = {.from=from, .to=to};
+//				vector_pushcpy(&sub->condition, &cond);
+//			}
+//
+//			case exp_cond:
+//			case exp_def:
+//			case exp_for: {
+//				//x should always be the same, match on base and i
+//				if (!bind(from->_for.step, to->_for.step, sub)
+//						|| !bind(from->_for.base, to->_for.base, sub)
+//						|| !bind(from->_for.i, to->_for.i, sub))
+//					return 0;
+//
+//				break;
+//			}
+//
+//			case exp_invert: break;
+//			default:;
+//		}
 	}
 
 
@@ -412,11 +513,7 @@ void print_expr(expr* exp) {
 			case exp_call: {
 				printf("call ");
 
-				vector_iterator iter = vector_iterate(&exp->call.sub.val);
-				while (vector_next(&iter)) {
-					print_expr(*(expr**) iter.x);
-					printf(" ");
-				}
+				printf("%s", exp->call.to->name);
 
 				break;
 			}
@@ -448,12 +545,19 @@ void expr_free(expr* exp) {
 				break;
 			}
 			case exp_call: {
-				vector_iterator iter = vector_iterate(&exp->call.sub.val);
-				while (vector_next(&iter)) {
-					expr_free(*(expr**) iter.x);
+				vector_iterator vals = vector_iterate(&exp->call.sub);
+				while (vector_next(&vals)) {
+					substitution* sub = vals.x;
+
+					vector_iterator iter = vector_iterate(&sub->val);
+					while (vector_next(&iter)) {
+						expr_free(*(expr**) iter.x);
+					}
+
+					vector_free(&sub->val);
 				}
 
-				vector_free(&exp->call.sub.val);
+				vector_free(&exp->call.sub);
 
 				break;
 			}

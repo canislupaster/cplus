@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
-
 typedef struct {
 	enum {
 		num_decimal,
@@ -21,6 +20,13 @@ typedef struct {
 
 num* num_new(num x);
 
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
 typedef struct expr expr;
 typedef struct {
 	char* start;
@@ -29,6 +35,7 @@ typedef struct {
 
 int cost(expr* exp);
 
+typedef struct value value;
 typedef struct {
 	unsigned long size;
 
@@ -70,12 +77,23 @@ typedef struct {
 
 	map scope;
 	//vector of copied substitutes for lazy evaluation
+	int bind;
 	vector sub;
 } evaluator;
 
 int condition(evaluator* ev, expr* exp1, expr* exp2);
 
+struct value {
+	span s;
+	vector condition;
+	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
 typedef struct {
+	struct value* to;
 	vector condition; //vec of sub_conds
 	vector val; //expression for every substitute indexes
 } substitution;
@@ -84,23 +102,22 @@ int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
-typedef struct value value;
-struct value {
-	vector substitutes;
-	map substitute_idx;
-
-	struct expr* val;
+typedef struct id id;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
 };
 struct expr {
 	span s;
 	int cost; //memoized cost
 
-	enum {
-		exp_bind, exp_num,
-		exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-		//a conditional is a for expressed without the base, def is a for if i=1
-				exp_cond, exp_def, exp_for, exp_call //2-3 args
-	} kind;
+	kind kind;
 
 	union {
 		num* by;
@@ -122,8 +139,8 @@ struct expr {
 		} binary;
 
 		struct {
-			struct value* to;
-			substitution sub;
+			struct id* to;
+			vector sub; // multiple dispatch, iterate until condition checks
 		} call;
 	};
 };

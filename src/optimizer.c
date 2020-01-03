@@ -15,11 +15,6 @@ int cost(expr* exp) {
 
 		switch (exp->kind) {
 			case exp_call: {
-				vector_iterator iter = vector_iterate(&exp->call.sub.val);
-				while (vector_next(&iter)) {
-					acc += cost(*(expr**) iter.x);
-				}
-
 				exp->cost = acc + CALL_COST;
 			}
 
@@ -189,9 +184,12 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 			break;
 		}
 		case exp_call: {
-			vector_iterator iter = vector_iterate(&exp->call.sub.val);
-			while (vector_next(&iter)) {
-				opt_reduce(iter.x, opt);
+			vector_iterator vals = vector_iterate(&exp->call.sub);
+			while (vector_next(&vals)) {
+				vector_iterator subs = vector_iterate(&((substitution*) vals.x)->val);
+				while (vector_next(&subs)) {
+					opt_reduce(subs.x, opt);
+				}
 			}
 
 			break;

@@ -15,6 +15,13 @@ typedef struct {
 
 int cost(expr* exp);
 
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
 typedef struct {
 	enum {
 		num_decimal,
@@ -27,6 +34,7 @@ typedef struct {
 		long double decimal;
 	};
 } num;
+typedef struct value value;
 typedef struct {
 	unsigned long size;
 
@@ -68,12 +76,23 @@ typedef struct {
 
 	map scope;
 	//vector of copied substitutes for lazy evaluation
+	int bind;
 	vector sub;
 } evaluator;
 
 int condition(evaluator* ev, expr* exp1, expr* exp2);
 
+struct value {
+	span s;
+	vector condition;
+	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
 typedef struct {
+	struct value* to;
 	vector condition; //vec of sub_conds
 	vector val; //expression for every substitute indexes
 } substitution;
@@ -82,23 +101,22 @@ int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
-typedef struct value value;
-struct value {
-	vector substitutes;
-	map substitute_idx;
-
-	struct expr* val;
+typedef struct id id;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
 };
 struct expr {
 	span s;
 	int cost; //memoized cost
 
-	enum {
-		exp_bind, exp_num,
-		exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-		//a conditional is a for expressed without the base, def is a for if i=1
-				exp_cond, exp_def, exp_for, exp_call //2-3 args
-	} kind;
+	kind kind;
 
 	union {
 		num* by;
@@ -120,14 +138,13 @@ struct expr {
 		} binary;
 
 		struct {
-			struct value* to;
-			substitution sub;
+			struct id* to;
+			vector sub; // multiple dispatch, iterate until condition checks
 		} call;
 	};
 };
 
 void print_expr(expr* exp);
-
 #define CONTROL_BYTES 16
 typedef struct {
 	uint8_t control_bytes[CONTROL_BYTES];
@@ -158,10 +175,6 @@ typedef enum {
 	t_sync, t_eof
 } token_type;
 typedef struct {
-	char* qualifier;
-	char* x;
-} name;
-typedef struct {
 	token_type tt;
 	span s;
 
@@ -190,6 +203,8 @@ void map_configure_string_key(map* map, unsigned long size);
 
 map map_new();
 
+vector vector_new(unsigned long size);
+
 int parse_id(parser* p);
 
 int substitute(expr* exp, substitution* sub);
@@ -200,18 +215,15 @@ extern const int CALL_COST;
 
 char* isprintf(const char* fmt, ...);
 
-typedef struct {
-	unsigned int x;
-	struct expr* what;
-} sub_cond;
-
-vector vector_new(unsigned long size);
-
-void note(const span* s, const char* x);
+void* vector_push(vector* vec);
 
 extern num ONE;
 
 expr* expr_new();
+
+void note(const span* s, const char* x);
+
+void call_new(expr* exp, id* i);
 
 expr* exp_copy(expr* exp);
 
@@ -256,15 +268,6 @@ vector_iterator vector_iterate(vector* vec);
 unsigned long* parse_unqualified_access(parser* p, char* x);
 
 void* map_find(map* map, void* key);
-
-typedef struct id id;
-struct id {
-	span s;
-	char* name;
-	value val;
-	span substitutes;
-	unsigned precedence;
-};
 
 id* id_access(parser* p, name* x);
 

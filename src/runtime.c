@@ -1,10 +1,5 @@
 #include "runtime.h"
 
-//FULLY EVALUATED?
-int is_literal(expr* exp) {
-	return exp->kind == exp_num;
-}
-
 expr* ev_unqualified_access(evaluator* ev, unsigned int x) {
 	expr** sub = vector_get(&ev->sub, x);
 	if (sub && *sub) {
@@ -25,24 +20,58 @@ expr* ev_unqualified_access(evaluator* ev, unsigned int x) {
 	return val;
 }
 
+void bind_identifier(evaluator* ev, substitution* sub1, substitution* sub2) {
+	vector_iterator iter_sub = vector_iterate(&sub1->val);
+	while (vector_next(&iter_sub)) {
+		expr* sub2_e = vector_get(&sub2->val, iter_sub.i - 1);
+		condition(ev, exp1, exp2);
+	}
+}
+
 ////checks equality of values
 int condition(evaluator* ev, expr* exp1, expr* exp2) {
-	expr exp1_v;
-	expr exp2_v;
+	expr exp1_v = *exp1;
+	expr exp2_v = *exp2;
 
-	if (!evaluate(ev, exp1, &exp1_v) || !evaluate(ev, exp2, &exp2_v)) return 0;
+	do {
+		if (exp1_v.kind == exp2_v.kind) {
+			switch (exp1_v.kind) {
+				case exp_num: return num_eq(*exp1_v.by, *exp2_v.by);
+				case exp_call: {
+					//make sure potential values intersect and substitutes are the same, then bind
 
-	if (exp1_v.kind != exp2_v.kind) return 0;
+					if (exp1_v.call.to != exp2_v.call.to) return 0;
+					vector_iterator exp1_sub = vector_iterate(&exp1_v.call.sub);
 
-	switch (exp1_v.kind) {
-		case exp_num: return num_eq(*exp1_v.by, *exp2_v.by);
-		default: return 0;
-	}
+					int exists = 0;
+					while (vector_next(&exp1_sub)) {
+						vector_iterator exp2_sub = vector_iterate(&exp2_v.call.sub);
+						while (vector_next(&exp2_sub)) {
+							if (((substitution*) exp1_sub.x)->to == ((substitution*) exp2_sub.x)->to) {
+
+							}
+						}
+					}
+				}
+				default:;
+			}
+		}
+	} while (evaluate(ev, exp1, &exp1_v) || !evaluate(ev, exp2, &exp2_v));
+
+	return 0;
 }
 
 ////unwrap for loops and compute arithmetic, transform expr to value
 int evaluate(evaluator* ev, expr* exp, expr* out) {
 	out->s = exp->s;
+
+	if (def(exp)) {
+		*out = *exp;
+
+		if (!is_literal(exp->_for.base)) return evaluate(ev, exp->_for.base, out->_for.base);
+		if (!is_literal(exp->_for.step)) return evaluate(ev, exp->_for.base, out->_for.step);
+		if (!is_literal(exp->_for.i)) return evaluate(ev, exp->_for.base, out->_for.i);
+	}
 
 	if (exp->kind == exp_for) {
 
@@ -92,21 +121,34 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 
 	} else if (exp->kind == exp_call) {
 
-		vector_cpy(&exp->call.sub.val, &ev->sub);
+		vector_iterator vals = vector_iterate(&exp->call.sub);
+		while (vector_next(&vals)) {
+			substitution* sub = vals.x;
 
-		vector_iterator iter_cond = vector_iterate(&exp->call.sub.condition);
-		while (vector_next(&iter_cond)) {
-			sub_cond* cond = iter_cond.x;
-			if (!condition(ev, cond->what, ev_unqualified_access(ev, cond->x))) {
-				//try other substitution
-				//otherwise
-				return throw(&cond->what->s, "does not match any substitution condition");
+			int satisfactory = 1; //satisfies conditions
+
+			vector_iterator iter_cond = vector_iterate(&sub->condition);
+			while (vector_next(&iter_cond)) {
+				sub_cond* cond = iter_cond.x;
+
+				if (!condition(ev, cond->from, cond->to)) {
+					satisfactory = 0;
+					break;
+				}
 			}
+
+			if (!satisfactory) break;
+
+			//set current substitution state
+			if (ev->sub.length) vector_clear(&ev->sub);
+			vector_cpy(&sub->val, &ev->sub);
+
+			*out = *sub->to->exp;
+			return 1;
 		}
 
-		int res = evaluate(ev, exp->call.to->val, out);
-		vector_clear(&ev->sub);
-		return res;
+		return throw(&exp->s,
+								 "does not satisfy any of the callee's conditions"); //does not satisfy any of the conditions
 
 	} else if (is_value(exp)) {
 
@@ -165,17 +207,21 @@ void evaluate_main(frontend* fe) {
 	id* main = map_find(&fe->global.ids, &MAIN);
 	if (!main) return;
 
-	if (main->val.substitutes.length > 0) {
-		throw(&main->s, "there must be no substitutes of main");
-		return;
+	vector_iterator iter = vector_iterate(&main->val);
+	while (vector_next(&iter)) {
+		value* val = iter.x;
+		if (val->substitutes.length > 0) {
+			throw(&val->s, "there must be no substitutes of main");
+			continue;
+		}
+
+		evaluator ev = {.mod=&fe->global, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr))};
+		map_configure_ulong_key(&ev.scope, sizeof(expr*));
+
+		expr out;
+		evaluate(&ev, val->exp, &out);
+		printf("main = ");
+		print_expr(&out);
+		printf("\n");
 	}
-
-	evaluator ev = {.mod=&fe->global, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr))};
-	map_configure_ulong_key(&ev.scope, sizeof(expr*));
-
-	expr out;
-	evaluate(&ev, main->val.val, &out);
-	printf("main = ");
-	print_expr(&out);
-	printf("\n");
 }

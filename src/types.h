@@ -119,21 +119,24 @@ typedef enum {
 
 /// substituted in reverse
 typedef struct {
+	struct value* to;
 	vector condition; //vec of sub_conds
 	vector val; //expression for every substitute indexes
 } substitution;
+
+typedef enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+} kind;
 
 /// everything has one to three arguments and can be chained
 typedef struct expr {
 	span s;
 	int cost; //memoized cost
 
-	enum {
-		exp_bind, exp_num,
-		exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-		//a conditional is a for expressed without the base, def is a for if i=1
-				exp_cond, exp_def, exp_for, exp_call //2-3 args
-	} kind;
+	kind kind;
 
 	union {
 		num* by;
@@ -155,8 +158,8 @@ typedef struct expr {
 		} binary;
 
 		struct {
-			struct value* to;
-			substitution sub;
+			struct id* to;
+			vector sub; // multiple dispatch, iterate until condition checks
 		} call;
 	};
 } expr;
@@ -164,7 +167,8 @@ typedef struct expr {
 typedef struct exp_idx {
 	struct exp_idx* from;
 	move_kind kind;
-	unsigned long i; //index of substitute
+	unsigned long i; //index of value
+	unsigned long i2; //index of substitute
 } exp_idx;
 
 typedef struct expr_iterator {
@@ -184,24 +188,34 @@ typedef struct {
 	char right;
 } binary_iterator;
 
+typedef struct sub_idx {
+	unsigned int i;
+	exp_idx idx;
+} sub_idx;
+
 typedef struct {
-	unsigned int x;
-	struct expr* what;
+	unsigned int i; //substitute index
+	exp_idx idx;
+
+	expr* exp; //make sure it is equivalent to an expression at leaf-binding
+	kind kind; //otherwise check kind and descend through substitute indexes
 } sub_cond;
 
 /// identifier or expr (empty vec and map)
 typedef struct value {
-	vector substitutes;
+	span s;
+	vector condition;
+	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
+
 	map substitute_idx;
 
-	struct expr* val;
+	struct expr* exp;
 } value;
 
 typedef struct id {
 	span s;
 	char* name;
-	value val;
-	span substitutes;
+	vector val; //multiple dispatch of different substitute <-> exp
 	unsigned precedence;
 } id;
 
@@ -250,5 +264,6 @@ typedef struct {
 
 	map scope;
 	//vector of copied substitutes for lazy evaluation
+	int bind;
 	vector sub;
 } evaluator;

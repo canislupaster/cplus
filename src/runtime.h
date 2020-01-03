@@ -15,6 +15,13 @@ typedef struct {
 
 int cost(expr* exp);
 
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
 typedef struct {
 	enum {
 		num_decimal,
@@ -27,6 +34,7 @@ typedef struct {
 		long double decimal;
 	};
 } num;
+typedef struct value value;
 typedef struct {
 	unsigned long size;
 
@@ -68,12 +76,23 @@ typedef struct {
 
 	map scope;
 	//vector of copied substitutes for lazy evaluation
+	int bind;
 	vector sub;
 } evaluator;
 
 int condition(evaluator* ev, expr* exp1, expr* exp2);
 
+struct value {
+	span s;
+	vector condition;
+	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
 typedef struct {
+	struct value* to;
 	vector condition; //vec of sub_conds
 	vector val; //expression for every substitute indexes
 } substitution;
@@ -82,23 +101,22 @@ int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
-typedef struct value value;
-struct value {
-	vector substitutes;
-	map substitute_idx;
-
-	struct expr* val;
+typedef struct id id;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
 };
 struct expr {
 	span s;
 	int cost; //memoized cost
 
-	enum {
-		exp_bind, exp_num,
-		exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-		//a conditional is a for expressed without the base, def is a for if i=1
-				exp_cond, exp_def, exp_for, exp_call //2-3 args
-	} kind;
+	kind kind;
 
 	union {
 		num* by;
@@ -120,8 +138,8 @@ struct expr {
 		} binary;
 
 		struct {
-			struct value* to;
-			substitution sub;
+			struct id* to;
+			vector sub; // multiple dispatch, iterate until condition checks
 		} call;
 	};
 };
@@ -133,19 +151,6 @@ void map_configure_ulong_key(map* map, unsigned long size);
 vector vector_new(unsigned long size);
 
 map map_new();
-
-typedef struct id id;
-typedef struct {
-	char* qualifier;
-	char* x;
-} name;
-struct id {
-	span s;
-	char* name;
-	value val;
-	span substitutes;
-	unsigned precedence;
-};
 
 void evaluate_main(frontend* fe);
 
@@ -169,26 +174,29 @@ int unary(expr* exp);
 
 int is_value(expr* exp);
 
-void vector_clear(vector* vec);
-
-typedef struct {
-	unsigned int x;
-	struct expr* what;
-} sub_cond;
-typedef struct {
-	vector* vec;
-
-	unsigned long i;
-	char rev;
-	void* x;
-} vector_iterator;
-
-int vector_next(vector_iterator* iter);
-
-vector_iterator vector_iterate(vector* vec);
-
 void vector_cpy(vector* from, vector* to);
 
+void vector_clear(vector* vec);
+
+typedef struct exp_idx exp_idx;
+typedef enum {
+	move_left, move_right, move_inner,
+	move_for_i, move_for_base, move_for_step,
+	move_call_i
+} move_kind;
+struct exp_idx {
+	struct exp_idx* from;
+	move_kind kind;
+	unsigned long i; //index of value
+	unsigned long i2; //index of substitute
+};
+typedef struct {
+	unsigned int i; //substitute index
+	exp_idx idx;
+
+	expr* exp; //make sure it is equivalent to an expression at leaf-binding
+	kind kind; //otherwise check kind and descend through substitute indexes
+} sub_cond;
 extern num ZERO;
 
 int map_remove(map* map, void* key);
@@ -202,7 +210,23 @@ map_insert_result map_insertcpy(map* map, void* key, void* v);
 
 int throw(const span* s, const char* x);
 
+int def(expr* exp);
+
 int num_eq(num num1, num num2);
+
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
+
+int vector_next(vector_iterator* iter);
+
+vector_iterator vector_iterate(vector* vec);
+
+void bind_identifier(evaluator* ev, substitution* sub1, substitution* sub2);
 
 void* map_find(map* map, void* key);
 
