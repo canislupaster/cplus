@@ -54,18 +54,6 @@ typedef struct {
 	char* data;
 } vector;
 typedef struct {
-	vector* vec;
-
-	unsigned long i;
-	char rev;
-	void* x;
-} vector_iterator;
-
-int vector_next(vector_iterator* iter);
-
-vector_iterator vector_iterate(vector* vec);
-
-typedef struct {
 	unsigned long key_size;
 	unsigned long size;
 
@@ -117,6 +105,18 @@ map_iterator map_iterate(map* map);
 
 void module_free(module* b);
 
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
+
+int vector_next(vector_iterator* iter);
+
+vector_iterator vector_iterate(vector* vec);
+
 typedef struct id id;
 struct id {
 	span s;
@@ -138,38 +138,8 @@ enum kind {
 			exp_cond, exp_def, exp_for, exp_call //2-3 args
 };
 typedef enum kind kind;
-typedef struct value value;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
-
 struct expr {
 	span s;
 	int cost; //memoized cost
@@ -207,6 +177,17 @@ void expr_free(expr* exp);
 void map_free(map* map);
 
 void vector_free(vector* vec);
+
+typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
 
 void value_free(value* val);
 

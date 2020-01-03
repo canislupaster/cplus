@@ -34,70 +34,6 @@ typedef struct {
 		long double decimal;
 	};
 } num;
-typedef struct value value;
-typedef struct {
-	unsigned long size;
-
-	unsigned long length;
-	char* data;
-} vector;
-typedef struct {
-	unsigned long key_size;
-	unsigned long size;
-
-	/// hash and compare
-	uint64_t (* hash)(void*);
-
-	/// compare(&left, &right)
-	int (* compare)(void*, void*);
-
-	unsigned long length;
-	unsigned long num_buckets;
-	char* buckets;
-} map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
-
-	vector tokens;
-
-	module global;
-
-	/// tells whether to continue into codegen
-	char errored;
-} frontend;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
@@ -106,6 +42,12 @@ typedef struct {
 	char* qualifier;
 	char* x;
 } name;
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
 struct id {
 	span s;
 	char* name;
@@ -145,6 +87,21 @@ struct expr {
 };
 
 void print_expr(expr* exp);
+
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
 #define CONTROL_BYTES 16
 typedef struct {
 	uint8_t control_bytes[CONTROL_BYTES];
@@ -162,7 +119,24 @@ typedef struct {
 }map_iterator;
 int map_next(map_iterator *iterator);
 map_iterator map_iterate(map *map);
+
+typedef struct {
+	map ids;
+} module;
 void print_module(module *b);
+
+typedef struct {
+	char* file;
+	span s;
+	unsigned long len;
+
+	vector tokens;
+
+	module global;
+
+	/// tells whether to continue into codegen
+	char errored;
+} frontend;
 void parse(frontend *fe);
 
 typedef enum {
@@ -197,13 +171,39 @@ typedef struct {
 
 int parse_mod(parser* p, module* b);
 
+typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+
+void gen_substitutes(value* val, expr* exp, unsigned int i);
+
+void gen_condition(value* val, expr* bind_exp, unsigned int i);
+
 void reduce(expr** exp);
 
 void map_configure_string_key(map* map, unsigned long size);
 
 map map_new();
 
-vector vector_new(unsigned long size);
+typedef struct sub_group sub_group;
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
+
+int condition(substitution* sub, unsigned long i, expr* root);
+
+struct sub_group {
+	vector condition;
+};
 
 int parse_id(parser* p);
 
@@ -214,6 +214,12 @@ void exp_rename(expr* exp, unsigned threshold, unsigned offset);
 extern const int CALL_COST;
 
 char* isprintf(const char* fmt, ...);
+
+void vector_free(vector* vec);
+
+int static_condition(substitution* sub, unsigned long i, expr* root);
+
+vector vector_new(unsigned long size);
 
 void* vector_push(vector* vec);
 

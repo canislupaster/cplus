@@ -279,12 +279,12 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 			break;
 		}
 
-		token* tok = parse_peek(p);
-		if (!is_name(tok)) { //no op
+		token* applier_name = parse_peek(p);
+		if (!is_name(applier_name)) { //no op
 			break;
 		}
 
-		id* applier = id_access(p, tok->val.name); //TODO: qualified appliers
+		id* applier = id_access(p, applier_name->val.name); //TODO: qualified appliers
 
 		if (applier) {
 			unsigned int prec = applier->precedence;
@@ -302,16 +302,26 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 			call_new(exp, applier);
 
 			int only = applier->val.length == 1; //provide more debugging info if there is only one dispatch
+			int did_bind = 0; //whether inline or call is successful
+
 			vector_iterator iter = vector_iterate(&applier->val);
 
+			//try to bind to one potential at a time
 			while (vector_next(&iter)) {
 				value* val = iter.x;
-				substitution* subs = vector_push(&exp->call.sub);
+
+				substitution* sub = vector_push(&exp->call.sub);
+				sub->val = vector_new(sizeof(expr*));
+				sub->static_ = 1;
+				sub->to = val;
+
+				vector_pushcpy(&sub->val, &old_exp);
 
 				//bind original expression
-				if (!bind(old_exp, *(expr**) vector_get(&val->substitutes, 0), subs)) {
+				if (!static_condition(sub, 0, old_exp)) {
+					vector_free(&sub->val);
 					vector_pop(&exp->call.sub);
-					if (only) throw_here(p, "cannot bind substitute");
+					if (only) throw(&old_exp->s, "cannot bind substitute");
 					continue;
 				}
 
@@ -321,44 +331,50 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 					if (!new_sub)
 						break;
 
-					if (!bind(new_sub, *(expr**) vector_get(&val->substitutes, i), subs)) {
+					vector_pushcpy(&sub->val, &new_sub);
+
+					if (!static_condition(sub, i, new_sub)) {
+						vector_free(&sub->val);
 						vector_pop(&exp->call.sub);
-						if (only) throw_here(p, "cannot bind substitute");
+						if (only) throw(&new_sub->s, "cannot bind substitute");
 						continue;
 					}
 				}
 
-				if (subs->val.length != val->substitutes.length) {
+				if (sub->val.length != val->substitutes.length) {
 					if (only) {
 						throw_here(p,
 											 isprintf("expected %lu substitutes, got %lu",
 																val->substitutes.length,
-																subs->val.length));
+																sub->val.length));
 						note(&val->s, "defined here");
 					}
 
+					vector_free(&sub->val);
 					vector_pop(&exp->call.sub);
 					continue;
 				}
 
-				if (val->exp && CALL_COST > cost(val->exp)
-						&& subs->condition.length == 0) {
+				did_bind = 1;
+
+				if (val->exp && CALL_COST > cost(val->exp) && sub->static_) {
 
 					expr* callee = exp_copy(val->exp);
 					exp_rename(callee, val->substitute_idx.length, p->substitute_idx->length - 1);
 
-					substitute(callee, subs);
+					substitute(callee, sub);
 
 					exp = callee;
 				}
 
-				if (subs->condition.length == 0) {
+				if (sub->static_) {
 					break; //wont get any better than this
 				}
 			}
 
-			if (exp->call.sub.length == 0) {
-				throw(&exp->s, "could not bind to callee");
+			if (!did_bind) {
+				throw(&applier->s, "could not bind to callee");
+				note(&applier->s, "defined here");
 				return NULL;
 			}
 
@@ -367,7 +383,7 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 			// this allows things like for loop quantities to return after parsing but identifiers to require parsing
 			return exp;
 		} else {
-			throw(&tok->s, "undefined identifier");
+			throw(&applier_name->s, "undefined identifier");
 			return NULL;
 		}
 	}
@@ -382,6 +398,7 @@ int parse_id(parser* p) {
 	//reset reducers
 	p->reducers = vector_new(sizeof(reducer));
 
+	val.groups = vector_new(sizeof(sub_group));
 	val.substitutes = vector_new(sizeof(expr*));
 	val.substitute_idx = map_new();
 
@@ -396,6 +413,9 @@ int parse_id(parser* p) {
 		if (exp) {
 			reduce(&exp);
 			vector_pushcpy(&val.substitutes, &exp);
+
+			gen_condition(&val, exp, 0);
+			gen_substitutes(&val, exp, 0);
 		} else {
 			return throw_here(p, "expected substitute");
 		}
@@ -419,20 +439,34 @@ int parse_id(parser* p) {
 	}
 
 	int eq;
+	unsigned long i = 1;
+
 	while (!(eq = parse_next_eq(p, t_eq)) && !parse_sync(p)) {
 		expr* exp = parse_expr(p, 1, 1);
 		if (exp) {
 			reduce(&exp);
 			vector_pushcpy(&val.substitutes, &exp);
+			//generation phase
+			gen_condition(&val, exp, i++);
+			gen_substitutes(&val, exp, i++);
 		} else {
 			return throw_here(p, "expected = or substitute");
 		}
 	}
 
 	if (eq) {
+		span eq_s = p->current.s;
+
 		val.exp = parse_expr(p, 0, 0);
 		while (!peek_sync(p) && parse_next_eq(p, t_eq)) { //parse primary alternative
 			val.exp = parse_expr(p, 0, 0);
+		}
+
+		if (!val.exp) {
+			throw_here(p, "expected value following equals sign");
+			note(&eq_s, "equals sign here");
+
+			return 0;
 		}
 
 		reduce(&val.exp);

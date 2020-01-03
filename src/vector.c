@@ -76,16 +76,18 @@ void* vector_get(vector* vec, unsigned long i) {
 
 void* vector_set(vector* vec, unsigned long i) {
 	if (i >= vec->length) {
-		vec->length = i - 1;
+		vec->length = i + 1;
 		vec->data = realloc(vec->data, vec->size * vec->length);
 	}
 
 	return vec->data + i * vec->size;
 }
 
-void vector_setcpy(vector* vec, unsigned long i, void* x) {
+void* vector_setcpy(vector* vec, unsigned long i, void* x) {
 	void* pos = vector_set(vec, i);
 	memcpy(pos, x, vec->size);
+
+	return pos;
 }
 
 vector_iterator vector_iterate(vector* vec) {

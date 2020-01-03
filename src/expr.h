@@ -42,64 +42,6 @@ typedef struct {
 		long double decimal;
 	};
 } num;
-typedef struct value value;
-typedef struct {
-	unsigned long key_size;
-	unsigned long size;
-
-	/// hash and compare
-	uint64_t (* hash)(void*);
-
-	/// compare(&left, &right)
-	int (* compare)(void*, void*);
-
-	unsigned long length;
-	unsigned long num_buckets;
-	char* buckets;
-} map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
-
-	vector tokens;
-
-	module global;
-
-	/// tells whether to continue into codegen
-	char errored;
-} frontend;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
@@ -152,8 +94,6 @@ void print_num(num* n);
 
 void print_expr(expr* exp);
 
-int num_eq(num num1, num num2);
-
 int remove_num(expr** eref, num* num);
 
 expr* extract_operand(expr* exp, unsigned long x);
@@ -172,8 +112,41 @@ binary_iterator binary_iter(expr* exp);
 
 int binding_exists(expr* exp, unsigned long x);
 
+typedef struct value value;
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
+
 int substitute(expr* exp, substitution* sub);
 
+expr* get_sub(substitution* sub, unsigned long i);
+
+typedef struct sub_idx sub_idx;
 typedef struct exp_idx exp_idx;
 typedef enum {
 	move_left, move_right, move_inner,
@@ -186,44 +159,40 @@ struct exp_idx {
 	unsigned long i; //index of value
 	unsigned long i2; //index of substitute
 };
+struct sub_idx {
+	unsigned int i;
+	exp_idx* idx;
+};
+
+void gen_substitutes(value* val, expr* exp, unsigned int i);
+
+int static_condition(substitution* sub, unsigned long i, expr* root);
+
+int num_eq(num num1, num num2);
+
+int literal_eq(expr* exp1, expr* exp2);
+
 typedef struct {
-	unsigned int i; //substitute index
-	exp_idx idx;
+	exp_idx* idx;
 
 	expr* exp; //make sure it is equivalent to an expression at leaf-binding
 	kind kind; //otherwise check kind and descend through substitute indexes
 } sub_cond;
-typedef struct sub_idx sub_idx;
-struct sub_idx {
-	unsigned int i;
-	exp_idx idx;
+
+int condition(substitution* sub, unsigned long i, expr* root);
+
+void* vector_setcpy(vector* vec, unsigned long i, void* x);
+
+typedef struct sub_group sub_group;
+struct sub_group {
+	vector condition;
 };
 
-void vector_setcpy(vector* vec, unsigned long i, void* x);
-
-void gen_substitutes(value* val, unsigned int i);
-
-int is_literal(expr* exp);
-
-void gen_condition(value* val, unsigned int i);
+void gen_condition(value* val, expr* bind_exp, unsigned int i);
 
 void exp_rename(expr* exp, unsigned threshold, unsigned offset);
 
-typedef struct {
-	vector* vec;
-
-	unsigned long i;
-	char rev;
-	void* x;
-} vector_iterator;
-
-int vector_next(vector_iterator* iter);
-
-vector_iterator vector_iterate(vector* vec);
-
 void vector_cpy(vector* from, vector* to);
-
-void* heapcpy(size_t size, const void* val);
 
 expr* exp_copy(expr* exp);
 
@@ -259,16 +228,49 @@ exp_idx* descend_i(exp_idx* start, move_kind kind, unsigned long i, unsigned lon
 
 exp_idx* descend(exp_idx* start, move_kind kind);
 
+void* heapcpy(size_t size, const void* val);
+
+exp_idx* exp_idx_copy(exp_idx* from);
+
 int def(expr* exp);
 
 int unary(expr* exp);
 
 int is_value(expr* exp);
 
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
+
+int vector_next(vector_iterator* iter);
+
+vector_iterator vector_iterate(vector* vec);
+
+int is_literal(expr* exp);
+
 vector vector_new(unsigned long size);
 
 void call_new(expr* exp, id* i);
 
+typedef struct {
+	map ids;
+} module;
+typedef struct {
+	char* file;
+	span s;
+	unsigned long len;
+
+	vector tokens;
+
+	module global;
+
+	/// tells whether to continue into codegen
+	char errored;
+} frontend;
 typedef enum {
 	t_name, t_non_bind,
 	t_add, t_sub,

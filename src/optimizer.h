@@ -51,56 +51,6 @@ typedef struct {
 		long double decimal;
 	};
 } num;
-typedef struct value value;
-typedef struct {
-	unsigned long size;
-
-	unsigned long length;
-	char* data;
-} vector;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
-
-	vector tokens;
-
-	module global;
-
-	/// tells whether to continue into codegen
-	char errored;
-} frontend;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
@@ -109,6 +59,12 @@ typedef struct {
 	char* qualifier;
 	char* x;
 } name;
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
 struct id {
 	span s;
 	char* name;
@@ -149,6 +105,21 @@ struct expr {
 
 void reduce(expr** exp);
 
+typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
 typedef struct {
 	vector* vec;
 

@@ -35,71 +35,6 @@ typedef struct {
 
 int cost(expr* exp);
 
-typedef struct value value;
-typedef struct {
-	unsigned long size;
-
-	unsigned long length;
-	char* data;
-} vector;
-typedef struct {
-	unsigned long key_size;
-	unsigned long size;
-
-	/// hash and compare
-	uint64_t (* hash)(void*);
-
-	/// compare(&left, &right)
-	int (* compare)(void*, void*);
-
-	unsigned long length;
-	unsigned long num_buckets;
-	char* buckets;
-} map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
-
-	vector tokens;
-
-	module global;
-
-	/// tells whether to continue into codegen
-	char errored;
-} frontend;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
-
 int binary(expr* exp);
 
 typedef struct id id;
@@ -107,6 +42,12 @@ typedef struct {
 	char* qualifier;
 	char* x;
 } name;
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
 struct id {
 	span s;
 	char* name;

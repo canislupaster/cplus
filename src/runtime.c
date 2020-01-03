@@ -20,43 +20,13 @@ expr* ev_unqualified_access(evaluator* ev, unsigned int x) {
 	return val;
 }
 
-void bind_identifier(evaluator* ev, substitution* sub1, substitution* sub2) {
-	vector_iterator iter_sub = vector_iterate(&sub1->val);
-	while (vector_next(&iter_sub)) {
-		expr* sub2_e = vector_get(&sub2->val, iter_sub.i - 1);
-		condition(ev, exp1, exp2);
-	}
-}
-
 ////checks equality of values
-int condition(evaluator* ev, expr* exp1, expr* exp2) {
-	expr exp1_v = *exp1;
-	expr exp2_v = *exp2;
+int ev_condition(evaluator* ev, substitution* sub, unsigned long i) {
+	expr exp = **(expr**) vector_get(&sub->val, i);
 
 	do {
-		if (exp1_v.kind == exp2_v.kind) {
-			switch (exp1_v.kind) {
-				case exp_num: return num_eq(*exp1_v.by, *exp2_v.by);
-				case exp_call: {
-					//make sure potential values intersect and substitutes are the same, then bind
-
-					if (exp1_v.call.to != exp2_v.call.to) return 0;
-					vector_iterator exp1_sub = vector_iterate(&exp1_v.call.sub);
-
-					int exists = 0;
-					while (vector_next(&exp1_sub)) {
-						vector_iterator exp2_sub = vector_iterate(&exp2_v.call.sub);
-						while (vector_next(&exp2_sub)) {
-							if (((substitution*) exp1_sub.x)->to == ((substitution*) exp2_sub.x)->to) {
-
-							}
-						}
-					}
-				}
-				default:;
-			}
-		}
-	} while (evaluate(ev, exp1, &exp1_v) || !evaluate(ev, exp2, &exp2_v));
+		condition(sub, i, &exp);
+	} while (evaluate(ev, &exp, &exp));
 
 	return 0;
 }
@@ -127,11 +97,9 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 
 			int satisfactory = 1; //satisfies conditions
 
-			vector_iterator iter_cond = vector_iterate(&sub->condition);
-			while (vector_next(&iter_cond)) {
-				sub_cond* cond = iter_cond.x;
-
-				if (!condition(ev, cond->from, cond->to)) {
+			vector_iterator iter_groups = vector_iterate(&sub->to->groups);
+			while (vector_next(&iter_groups)) {
+				if (!ev_condition(ev, sub, iter_groups.i)) {
 					satisfactory = 0;
 					break;
 				}
@@ -140,10 +108,16 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 			if (!satisfactory) break;
 
 			//set current substitution state
-			if (ev->sub.length) vector_clear(&ev->sub);
-			vector_cpy(&sub->val, &ev->sub);
+			for (unsigned long i = 0; i < sub->to->substitutes.length; i++) {
+				vector_pushcpy(&ev->sub, get_sub(sub, i));
+			}
 
-			*out = *sub->to->exp;
+			ev->stack_offset += sub->to->substitutes.length;
+
+			//copy and rename by stack offset
+			*out = *exp_copy(sub->to->exp);
+			exp_rename(out, 0, ev->stack_offset);
+
 			return 1;
 		}
 
@@ -153,9 +127,9 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 	} else if (is_value(exp)) {
 
 		switch (exp->kind) {
-			case exp_num: *out = *exp;
-				break;
 			case exp_bind: return evaluate(ev, ev_unqualified_access(ev, exp->bind), out);
+			default: *out = *exp;
+				break;
 		}
 
 	} else if (unary(exp)) {
@@ -215,7 +189,7 @@ void evaluate_main(frontend* fe) {
 			continue;
 		}
 
-		evaluator ev = {.mod=&fe->global, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr))};
+		evaluator ev = {.mod=&fe->global, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr)), .stack_offset=0};
 		map_configure_ulong_key(&ev.scope, sizeof(expr*));
 
 		expr out;

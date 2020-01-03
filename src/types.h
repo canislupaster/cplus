@@ -120,7 +120,7 @@ typedef enum {
 /// substituted in reverse
 typedef struct {
 	struct value* to;
-	vector condition; //vec of sub_conds
+	char static_; //whether it can be inlined / passes all conditions statically
 	vector val; //expression for every substitute indexes
 } substitution;
 
@@ -190,22 +190,25 @@ typedef struct {
 
 typedef struct sub_idx {
 	unsigned int i;
-	exp_idx idx;
+	exp_idx* idx;
 } sub_idx;
 
 typedef struct {
-	unsigned int i; //substitute index
-	exp_idx idx;
+	exp_idx* idx;
 
 	expr* exp; //make sure it is equivalent to an expression at leaf-binding
 	kind kind; //otherwise check kind and descend through substitute indexes
 } sub_cond;
 
+typedef struct sub_group {
+	vector condition;
+} sub_group;
+
 /// identifier or expr (empty vec and map)
 typedef struct value {
 	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
 
 	map substitute_idx;
 
@@ -261,6 +264,8 @@ typedef struct {
 typedef struct {
 	frontend* fe;
 	module* mod;
+
+	unsigned long stack_offset; //length of sub
 
 	map scope;
 	//vector of copied substitutes for lazy evaluation

@@ -34,70 +34,6 @@ typedef struct {
 		long double decimal;
 	};
 } num;
-typedef struct value value;
-typedef struct {
-	unsigned long size;
-
-	unsigned long length;
-	char* data;
-} vector;
-typedef struct {
-	unsigned long key_size;
-	unsigned long size;
-
-	/// hash and compare
-	uint64_t (* hash)(void*);
-
-	/// compare(&left, &right)
-	int (* compare)(void*, void*);
-
-	unsigned long length;
-	unsigned long num_buckets;
-	char* buckets;
-} map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
-
-	vector tokens;
-
-	module global;
-
-	/// tells whether to continue into codegen
-	char errored;
-} frontend;
-typedef struct {
-	frontend* fe;
-	module* mod;
-
-	map scope;
-	//vector of copied substitutes for lazy evaluation
-	int bind;
-	vector sub;
-} evaluator;
-
-int condition(evaluator* ev, expr* exp1, expr* exp2);
-
-struct value {
-	span s;
-	vector condition;
-	vector substitutes; //vector of sub_idx specifying substitutes in terms of move_call_i
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-typedef struct {
-	struct value* to;
-	vector condition; //vec of sub_conds
-	vector val; //expression for every substitute indexes
-} substitution;
-
-int bind(expr* from, expr* to, substitution* sub);
 
 int binary(expr* exp);
 
@@ -106,6 +42,12 @@ typedef struct {
 	char* qualifier;
 	char* x;
 } name;
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
 struct id {
 	span s;
 	char* name;
@@ -146,11 +88,52 @@ struct expr {
 
 void print_expr(expr* exp);
 
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
+
 void map_configure_ulong_key(map* map, unsigned long size);
 
 vector vector_new(unsigned long size);
 
 map map_new();
+
+typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+typedef struct {
+	map ids;
+} module;
+typedef struct {
+	char* file;
+	span s;
+	unsigned long len;
+
+	vector tokens;
+
+	module global;
+
+	/// tells whether to continue into codegen
+	char errored;
+} frontend;
 
 void evaluate_main(frontend* fe);
 
@@ -174,30 +157,35 @@ int unary(expr* exp);
 
 int is_value(expr* exp);
 
-void vector_cpy(vector* from, vector* to);
+void exp_rename(expr* exp, unsigned threshold, unsigned offset);
 
-void vector_clear(vector* vec);
+expr* exp_copy(expr* exp);
 
-typedef struct exp_idx exp_idx;
-typedef enum {
-	move_left, move_right, move_inner,
-	move_for_i, move_for_base, move_for_step,
-	move_call_i
-} move_kind;
-struct exp_idx {
-	struct exp_idx* from;
-	move_kind kind;
-	unsigned long i; //index of value
-	unsigned long i2; //index of substitute
-};
 typedef struct {
-	unsigned int i; //substitute index
-	exp_idx idx;
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
 
-	expr* exp; //make sure it is equivalent to an expression at leaf-binding
-	kind kind; //otherwise check kind and descend through substitute indexes
-} sub_cond;
+expr* get_sub(substitution* sub, unsigned long i);
+
+void* vector_pushcpy(vector* vec, void* x);
+
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
+
+int vector_next(vector_iterator* iter);
+
+vector_iterator vector_iterate(vector* vec);
+
 extern num ZERO;
+
+int num_eq(num num1, num num2);
 
 int map_remove(map* map, void* key);
 
@@ -212,21 +200,21 @@ int throw(const span* s, const char* x);
 
 int def(expr* exp);
 
-int num_eq(num num1, num num2);
+int condition(substitution* sub, unsigned long i, expr* root);
 
 typedef struct {
-	vector* vec;
+	frontend* fe;
+	module* mod;
 
-	unsigned long i;
-	char rev;
-	void* x;
-} vector_iterator;
+	unsigned long stack_offset; //length of sub
 
-int vector_next(vector_iterator* iter);
+	map scope;
+	//vector of copied substitutes for lazy evaluation
+	int bind;
+	vector sub;
+} evaluator;
 
-vector_iterator vector_iterate(vector* vec);
-
-void bind_identifier(evaluator* ev, substitution* sub1, substitution* sub2);
+int ev_condition(evaluator* ev, substitution* sub, unsigned long i);
 
 void* map_find(map* map, void* key);
 
@@ -234,8 +222,8 @@ int evaluate(evaluator* ev, expr* exp, expr* out);
 
 expr* expr_new();
 
+int is_literal(expr* exp);
+
 void* vector_get(vector* vec, unsigned long i);
 
 expr* ev_unqualified_access(evaluator* ev, unsigned int x);
-
-int is_literal(expr* exp);

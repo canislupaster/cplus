@@ -26,13 +26,22 @@ void call_new(expr* exp, id* i) {
 
 //CLASSIFIERS
 
-//FULLY EVALUATED?
 int is_literal(expr* exp) {
+	//check that all potential substitutions do not have any equivalent expressions; as simplified as can be
+	if (exp->kind == exp_call) {
+		vector_iterator iter = vector_iterate(&exp->call.sub);
+		while (vector_next(&iter)) {
+			if (((substitution*) iter.x)->to->exp != NULL) return 0;
+		}
+
+		return 1;
+	}
+
 	return exp->kind == exp_num;
 }
 
 int is_value(expr* exp) {
-	return exp->kind == exp_num || exp->kind == exp_bind;
+	return is_literal(exp) || exp->kind == exp_bind;
 }
 
 int binary(expr* exp) {
@@ -45,6 +54,15 @@ int unary(expr* exp) {
 
 int def(expr* exp) {
 	return exp->kind == exp_for || exp->kind == exp_def || exp->kind == exp_cond;
+}
+
+exp_idx* exp_idx_copy(exp_idx* from) {
+	if (!from) return NULL;
+
+	exp_idx* new_idx = heapcpy(sizeof(exp_idx), from);
+	if (from->from) new_idx->from = exp_idx_copy(from->from);
+
+	return new_idx;
 }
 
 exp_idx* descend(exp_idx* start, move_kind kind) {
@@ -239,7 +257,6 @@ expr* exp_copy(expr* exp) {
 			vector_iterator vals = vector_iterate(&new_exp->call.sub);
 			while (vector_next(&vals)) {
 				substitution* sub = vals.x;
-				vector_cpy(&sub->condition, &sub->condition);
 				vector_cpy(&sub->val, &sub->val);
 
 				vector_iterator iter = vector_iterate(&sub->val);
@@ -269,123 +286,116 @@ void exp_rename(expr* exp, unsigned threshold, unsigned offset) {
 	}
 }
 
-void gen_condition(value* val, unsigned int i) {
-	expr_iterator iter = exp_iter(val->exp);
+void gen_condition(value* val, expr* bind_exp, unsigned int i) {
+	sub_group* group = vector_setcpy(&val->groups, i,
+																	 &(sub_group) {.condition=vector_new(sizeof(sub_cond))});
+
+	expr_iterator iter = exp_iter(bind_exp);
 	while (!iter.done) {
 		exp_get(&iter);
 
-		sub_cond cond = {.i=i, .idx=*iter.cursor};
+		sub_cond cond = {.idx=exp_idx_copy(iter.cursor)}; //FIXME: MEMORY LEAKING INDEXES EVERYWHERE
 
 		//insert expression to check if literal, otherwise checking the kind is enough
 		if (is_literal(iter.x)) {
 			cond.exp = iter.x;
-			vector_pushcpy(&val->condition, &cond);
+			vector_pushcpy(&group->condition, &cond);
 		} else {
 			cond.exp = NULL;
 			cond.kind = iter.x->kind;
-			vector_pushcpy(&val->condition, &cond);
+			vector_pushcpy(&group->condition, &cond);
 		}
 
 		exp_go(&iter);
 	}
 }
 
-void gen_substitutes(value* val, unsigned int i) {
-	expr_iterator iter = exp_iter(val->exp);
-	while (!iter.done) {
-		exp_get(&iter);
+int literal_eq(expr* exp1, expr* exp2) {
+	if (exp1->kind != exp2->kind) return 0;
 
-		if (iter.x->kind == exp_bind) {
-			vector_setcpy(&val->substitutes, iter.x->bind, &(sub_idx) {.idx = *iter.cursor, .i=i});
-		}
-
-		exp_go(&iter);
+	switch (exp1->kind) {
+		case exp_num: return num_eq(*exp1->by, *exp2->by);
+		default: return 0; //not a literal
 	}
 }
 
-int bind(expr* from, expr* to, substitution* sub) {
-	if (binary(from) && binary(to)) {
-		if (from->kind != to->kind)
-			return 0;
+//check all conditions
+int condition(substitution* sub, unsigned long i, expr* root) {
+	sub_group* group = vector_get(&sub->to->groups, i);
+	vector_iterator cond_iter = vector_iterate(&group->condition);
+	while (vector_next(&cond_iter)) {
+		sub_cond* cond = cond_iter.x;
 
-		if (!bind(from->binary.left, to->binary.left, sub))
-			return 0;
-		if (!bind(from->binary.right, to->binary.right, sub))
-			return 0;
-	} else if (to->kind == exp_bind) {
-		vector_pushcpy(&sub->val, &from);
-	} else if (from->kind == exp_bind) { //make sure from == to at runtime (and do bind if necessary)
-		sub_cond cond = {.from=from, .to=to};
-		vector_pushcpy(&sub->condition, &cond);
-	} else {
-		sub_cond cond = {.from=from, .to=to};
-		vector_pushcpy(&sub->condition, &cond);
-
-//		if (to->kind != from->kind)
-//			return 0;
-
-//		switch (from->kind) {
-//			case exp_call: {
-//				if (from->call.to != to->call.to)
-//					return 0;
-//
-//				vector_iterator iter = vector_iterate(&from->call.sub);
-//				while (vector_next(&iter)) {
-//					substitution* from_sub = iter.x;
-//					//search for matching value
-//					vector_iterator iter_to = vector_iterate(&to->call.sub);
-//					while (vector_next(&iter_to)) {
-//						substitution* to_sub = iter_to.x;
-//						if (to_sub->to != from_sub->to) continue;
-//						//substitute
-//						vector_iterator iter_sub = vector_iterate(&from_sub->val);
-//						while (vector_next(&iter_sub)) {
-//
-//						}
-//						expr* exp_2 = *(expr**) vector_get(&to->call.sub.val, iter.i - 1);
-//						if (!exp_2)
-//							return 0;
-//
-//						if (!bind(iter.x, exp_2, sub))
-//							return 0;
-//					}
-//				}
-//
-//				//insert condition to ensure that conditions of both calls intersect
-//				sub_cond cond = {.from=from, .to=to};
-//				vector_pushcpy(&sub->condition, &cond);
-//			}
-//
-//			case exp_cond:
-//			case exp_def:
-//			case exp_for: {
-//				//x should always be the same, match on base and i
-//				if (!bind(from->_for.step, to->_for.step, sub)
-//						|| !bind(from->_for.base, to->_for.base, sub)
-//						|| !bind(from->_for.i, to->_for.i, sub))
-//					return 0;
-//
-//				break;
-//			}
-//
-//			case exp_invert: break;
-//			default:;
-//		}
+		expr* exp = goto_idx(root, cond->idx);
+		if (cond->exp) {
+			if (!literal_eq(exp, cond->exp)) return 0;
+		} else if (exp->kind != cond->kind) return 0; //TODO: inversion and addition expansion
 	}
-
 
 	return 1;
 }
 
+/// compile time condition check
+int static_condition(substitution* sub, unsigned long i, expr* root) {
+	sub_group* group = vector_get(&sub->to->groups, i);
+
+	vector_iterator cond_iter = vector_iterate(&group->condition);
+	while (vector_next(&cond_iter)) {
+		sub_cond* cond = cond_iter.x;
+
+		expr* exp = goto_idx(root, cond->idx);
+		if (cond->exp) {
+			if (!literal_eq(exp, cond->exp)) {
+				sub->static_ = 0;
+				return 0;
+			}
+		} else if (is_literal(exp) && exp->kind != cond->kind) {
+			sub->static_ = 0;
+			return 0;
+		} else {
+			sub->static_ = 0;
+		}
+	}
+
+	return 1;
+}
+
+void gen_substitutes(value* val, expr* exp, unsigned int i) {
+	expr_iterator iter = exp_iter(exp);
+	while (!iter.done) {
+		exp_get(&iter);
+
+		if (iter.x->kind == exp_bind) {
+			vector_setcpy(&val->substitutes, iter.x->bind,
+										&(sub_idx) {.idx = exp_idx_copy(iter.cursor), .i=i});
+		}
+
+		exp_go(&iter);
+	}
+}
+
+expr* get_sub(substitution* sub, unsigned long i) {
+	sub_idx* idx = vector_get(&sub->to->substitutes, i);
+	expr* root = *(expr**) vector_get(&sub->val, idx->i);
+	if (!root) return 0;
+
+	return goto_idx(root, idx->idx);
+}
+
 //substitutes in reverse in comparison to bind function
 int substitute(expr* exp, substitution* sub) {
-	if (sub->condition.length > 0)
-		return 0;
+	vector_iterator group_iter = vector_iterate(&sub->to->groups);
+	while (vector_next(&group_iter)) {
+		sub_group* group = group_iter.x;
+
+		if (group->condition.length > 0)
+			return 0;
+	}
 
 	expr_iterator iter = exp_iter(exp);
 	while (exp_next(&iter)) {
 		if (iter.x->kind == exp_bind && iter.x->bind < sub->val.length) {
-			*iter.x = **(expr**) vector_get(&sub->val, iter.x->bind);
+			get_sub(sub, iter.x->bind);
 		}
 	}
 

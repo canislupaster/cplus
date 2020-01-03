@@ -31,7 +31,7 @@ int vector_next(vector_iterator* iter);
 
 vector_iterator vector_iterate(vector* vec);
 
-void vector_setcpy(vector* vec, unsigned long i, void* x);
+void* vector_setcpy(vector* vec, unsigned long i, void* x);
 
 void* vector_set(vector* vec, unsigned long i);
 

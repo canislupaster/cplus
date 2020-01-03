@@ -241,11 +241,14 @@ frontend make_frontend() {
 void value_free(value* val) {
 	vector_free(&val->substitutes);
 	map_free(&val->substitute_idx);
-	expr_free(val->exp);
+	if (val->exp) expr_free(val->exp);
 }
 
 void id_free(id* xid) {
-	value_free(&xid->val);
+	vector_iterator val_iter = vector_iterate(&xid->val);
+	while (vector_next(&val_iter)) {
+		value_free(val_iter.x);
+	}
 }
 
 void module_free(module* b) {
