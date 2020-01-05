@@ -1,24 +1,33 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
 
+typedef enum {
+	t_name, t_non_bind,
+	t_add, t_sub,
+	t_ellipsis, t_comma,
+	t_in, t_for,
+	t_eq, t_lparen, t_rparen,
+	t_str, t_num,
+	t_sync, t_eof
+} token_type;
+typedef struct span span;
+typedef struct module module;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
 typedef struct {
 	unsigned long size;
 
 	unsigned long length;
 	char* data;
 } vector;
-
-void vector_clear(vector* vec);
-
-typedef struct {
-	char* start;
-	char* end;
-} span;
 typedef struct {
 	unsigned long key_size;
 	unsigned long size;
@@ -33,20 +42,51 @@ typedef struct {
 	unsigned long num_buckets;
 	char* buckets;
 } map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
+struct module {
+	char* name;
 
+	span s;
 	vector tokens;
 
-	module global;
+	map ids;
+};
+struct span {
+	module* mod;
 
-	/// tells whether to continue into codegen
-	char errored;
+	char* start;
+	char* end;
+};
+typedef struct {
+	enum {
+		num_decimal,
+		num_integer,
+	} ty;
+
+	union {
+		uint64_t uint;
+		int64_t integer;
+		long double decimal;
+	};
+} num;
+typedef struct {
+	token_type tt;
+	span s;
+
+	union {
+		name* name;
+		char* str;
+		num* num;
+	} val;
+} token;
+
+vector vector_new(unsigned long size);
+
+typedef struct {
+	module current;
+
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map allocations; //ptr to trace
 } frontend;
 
 void evaluate_main(frontend* fe);
@@ -67,5 +107,7 @@ void set_col(FILE *f,char color);
 void set_col(FILE* f, char color);
 
 #endif
+
+void module_init(module* b);
 
 frontend make_frontend();

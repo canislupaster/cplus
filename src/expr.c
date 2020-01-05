@@ -306,7 +306,7 @@ void gen_condition(value* val, expr* bind_exp, unsigned int i) {
 
 		//insert expression to check if literal, otherwise checking the kind is enough
 		if (is_literal(iter.x)) {
-			cond.exp = iter.x;
+			cond.exp = exp_copy(iter.x); //copy, since bind expressions will be freed
 			vector_pushcpy(&group->condition, &cond);
 		} else {
 			cond.exp = NULL;
@@ -546,6 +546,13 @@ void print_expr(expr* exp) {
 	}
 }
 
+void exp_idx_free(exp_idx* idx) {
+	if (!idx) return;
+
+	if (idx->from) exp_idx_free(idx->from);
+	free(idx);
+}
+
 void expr_free(expr* exp) {
 	if (unary(exp)) {
 		expr_free(exp->inner);
@@ -584,5 +591,5 @@ void expr_free(expr* exp) {
 	}
 
 
-	free(exp);
+	drop(exp);
 }

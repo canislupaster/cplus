@@ -49,11 +49,19 @@ uint64_t hash_ulong(unsigned long* x) {
 	return siphash24((uint8_t*) x, sizeof(unsigned long), (char*) SIPHASH_KEY.key);
 }
 
+uint64_t hash_ptr(void** x) {
+	return siphash24((uint8_t*) x, sizeof(void*), (char*) SIPHASH_KEY.key);
+}
+
 int compare_string(char** left, char** right) {
 	return strcmp(*left, *right) == 0;
 }
 
 int compare_ulong(unsigned long* left, unsigned long* right) {
+	return *left == *right;
+}
+
+int compare_ptr(void** left, void** right) {
 	return *left == *right;
 }
 
@@ -80,7 +88,7 @@ void map_configure(map* map, unsigned long size) {
 	map->size = size + map->key_size;
 
 	unsigned long x = DEFAULT_BUCKETS * map_bucket_size(map);
-	map->buckets = malloc(x);
+	map->buckets = heap(x);
 
 	for (unsigned long i = 0; i < map->num_buckets; i++) {
 		memcpy(map->buckets + i * map_bucket_size(map), DEFAULT_BUCKET, CONTROL_BYTES);
@@ -97,6 +105,15 @@ void map_configure_string_key(map* map, unsigned long size) {
 }
 
 void map_configure_ulong_key(map* map, unsigned long size) {
+	map->key_size = sizeof(unsigned long); //string reference is default key
+
+	map->hash = (uint64_t(*)(void*)) hash_ulong;
+	map->compare = (int (*)(void*, void*)) compare_ulong;
+
+	map_configure(map, size);
+}
+
+void map_configure_ptr_key(map* map, unsigned long size) {
 	map->key_size = sizeof(unsigned long); //string reference is default key
 
 	map->hash = (uint64_t(*)(void*)) hash_ulong;
@@ -318,7 +335,7 @@ void map_resize(map* map) {
 		unsigned long old_num_buckets = map->num_buckets;
 		map->num_buckets = map->num_buckets * 2;
 
-		map->buckets = realloc(map->buckets, map->num_buckets * map_bucket_size(map));
+		map->buckets = resize(map->buckets, map->num_buckets * map_bucket_size(map));
 
 		for (unsigned long i = old_num_buckets; i < map->num_buckets; i++) {
 			memcpy(map->buckets + i * map_bucket_size(map), DEFAULT_BUCKET, CONTROL_BYTES);
@@ -375,9 +392,7 @@ map_insert_result map_insertcpy(map* map, void* key, void* v) {
 
 void map_cpy(map* from, map* to) {
 	*to = *from;
-	to->buckets = malloc(from->num_buckets * map_bucket_size(from));
-	//copy all data
-	memcpy(to->buckets, from->buckets, from->num_buckets * map_bucket_size(from));
+	to->buckets = heapcpy(from->num_buckets * map_bucket_size(from), from->buckets);
 }
 
 int map_remove(map* map, void* key) {
@@ -393,5 +408,5 @@ int map_remove(map* map, void* key) {
 }
 
 void map_free(map* map) {
-	free(map->buckets);
+	drop(map->buckets);
 }

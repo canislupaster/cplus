@@ -15,7 +15,7 @@ void lex_back(lexer* l) {
 }
 
 int lex_eof(lexer* l) {
-	return l->pos.end > l->fe->s.end;
+	return l->pos.end > l->mod->s.end;
 }
 
 /// marks current char as start
@@ -25,7 +25,7 @@ void lex_mark(lexer* l) {
 
 /// returns null when eof
 char lex_peek(lexer* l) {
-	if (l->pos.end - 1 >= l->fe->s.end)
+	if (l->pos.end - 1 >= l->mod->s.end)
 		return 0;
 	return *(l->pos.end);
 }
@@ -42,7 +42,7 @@ int lex_next_eq(lexer* l, char x) {
 
 /// utility fn
 token* token_push(lexer* l, token_type tt) {
-	token* t = vector_pushcpy(&l->fe->tokens,
+	token* t = vector_pushcpy(&l->mod->tokens,
 														&(token) {.tt=tt, .s=l->pos});
 	return t;
 }
@@ -254,7 +254,9 @@ int lex_char(lexer* l) {
 }
 
 void lex(frontend* fe) {
-	lexer l = {.fe=fe, .pos={.start=fe->s.start, .end=fe->s.start}};
+	lexer l = {.mod=&fe->current,
+			.pos={.start=fe->current->s.start, .end=fe->current->s.start}};
+
 	while (lex_char(&l));
 }
 
@@ -262,10 +264,10 @@ void token_free(token* t) {
 	switch (t->tt) {
 		case t_name: {
 			if (t->val.name->qualifier)
-				free(t->val.name->qualifier);
-			free(t->val.name->x);
+				drop(t->val.name->qualifier);
+			drop(t->val.name->x);
 		}
-		case t_num: free(t->val.num);
+		case t_num: drop(t->val.num);
 			break;
 
 		default:;

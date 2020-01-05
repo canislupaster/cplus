@@ -5,6 +5,12 @@
 #include "math.h"
 #include "string.h"
 
+#define TRACE_SIZE 10
+
+typedef struct {
+	void* stack[TRACE_SIZE];
+} trace;
+
 //VECTOR
 
 typedef struct {
@@ -65,7 +71,10 @@ typedef struct {
 
 //LEXER
 
-typedef struct {
+typedef struct module module;
+typedef struct span {
+	module* mod;
+
 	char* start;
 	char* end;
 } span;
@@ -227,25 +236,25 @@ typedef struct reducer {
 	unsigned long x;
 } reducer;
 
-typedef struct {
-	map ids;
-} module;
+struct module {
+	char* name;
 
-typedef struct {
-	char* file;
 	span s;
-	unsigned long len;
-
 	vector tokens;
 
-	module global;
+	map ids;
+};
 
-	/// tells whether to continue into codegen
-	char errored;
+typedef struct {
+	module current;
+
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map allocations; //ptr to trace
 } frontend;
 
 typedef struct {
-	frontend* fe;
+	module* mod;
 	span pos;
 	char x;
 } lexer;

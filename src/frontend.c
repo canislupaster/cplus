@@ -1,7 +1,9 @@
 #include "frontend.h"
 #include "colors.h"
 
-frontend* FRONTEND; //global frontend
+#include "execinfo.h"
+
+frontend* FRONTEND = NULL; //global frontend
 
 const span SPAN_NULL = {.start=NULL};
 
@@ -53,10 +55,12 @@ void msg(frontend* fe,
 				 const char* msg) {
 	if (s->start == NULL) {
 		set_col(stdout, color1);
-		printf(template_empty, fe->file);
+		printf(template_empty, fe->name);
 
 		set_col(stdout, color2);
 		printf("%s\n\n", msg);
+
+		return;
 	}
 
 	//while the file is probably the same, we may have to reconstruct line and col if custom span
@@ -104,7 +108,7 @@ void msg(frontend* fe,
 	int digits = (int) log10(line + lines.length) + 1;
 
 	set_col(stdout, color1);
-	printf(template, fe->file, line, col);
+	printf(template, fe->name, line, col);
 
 	set_col(stdout, color2);
 	printf("%s\n\n", msg);
@@ -130,7 +134,7 @@ void msg(frontend* fe,
 		printf("%s | ", line_num);
 		set_col(stdout, color2);
 		printf("%s\n", str);
-		free(str);
+		drop(str);
 		//check if original span is contained within line, then highlight
 		if ((s->end > x->start)
 				&& (s->start >= x->start && s->end <= x->end)) {
@@ -158,8 +162,8 @@ void msg(frontend* fe,
 
 ///always returns zero for convenience
 int throw(const span* s, const char* x) {
-	FRONTEND->errored = 1;
-	msg(FRONTEND, s, RED, WHITE, "error in %s", "error at %s:%lu:%lu: ", x);
+	if (FRONTEND) FRONTEND->errored = 1;
+	msg(FRONTEND, s, RED, WHITE, "error in %s: ", "error at %s:%lu:%lu: ", x);
 	return 0;
 }
 
@@ -171,8 +175,36 @@ void note(const span* s, const char* x) {
 	msg(FRONTEND, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
 }
 
+trace stacktrace() {
+	trace x = {};
+	backtrace(x.stack, TRACE_SIZE);
+
+	return x;
+}
+
 void* heap(size_t size) {
 	void* res = malloc(size);
+	trace tr = stacktrace();
+
+	if (!res) {
+		throw(&SPAN_NULL, "out of memory!");
+		print_trace(&tr);
+		exit(1);
+	}
+
+	if (FRONTEND) map_insertcpy(&FRONTEND->allocations, &res, &tr);
+
+	return res;
+}
+
+void* heapcpy(size_t size, const void* val) {
+	void* res = heap(size);
+	memcpy(res, val, size);
+	return res;
+}
+
+void* resize(void* ptr, size_t size) {
+	void* res = realloc(ptr, size);
 
 	if (!res) {
 		throw(&SPAN_NULL, "out of memory!");
@@ -182,10 +214,42 @@ void* heap(size_t size) {
 	return res;
 }
 
-void* heapcpy(size_t size, const void* val) {
-	void* res = heap(size);
-	memcpy(res, val, size);
-	return res;
+void drop(void* ptr) {
+	free(ptr);
+	if (FRONTEND) map_remove(&FRONTEND->allocations, &ptr);
+}
+
+void print_trace(trace* trace) {
+	printf("stack trace: \n");
+
+	char** data = backtrace_symbols(trace->stack, TRACE_SIZE);
+
+	for (int i = 0; i < TRACE_SIZE; i++) {
+		printf("%s\n", data[i]);
+	}
+
+	drop(data);
+}
+
+/// done during frontend_free
+void memcheck() {
+	if (!FRONTEND) return;
+
+	if (FRONTEND->allocations.length > 0) {
+		throw(&SPAN_NULL, "memory leak detected\n");
+
+		map_iterator iter = map_iterate(&FRONTEND->allocations);
+		while (map_next(&iter)) {
+			printf("stacktrace for object at %ptr\n\n", *(void**) iter.key);
+			print_trace(iter.x);
+			printf("\n\n\n");
+		}
+	}
+
+	frontend* fe = FRONTEND;
+	FRONTEND = NULL;
+
+	map_free(&fe->allocations);
 }
 
 void print_num(num* n) {
@@ -202,7 +266,7 @@ int is_name(token* x) {
 }
 
 ///initialize frontend with file
-int read_file(frontend* fe, char* filename) {
+int read_file(module* mod, char* filename) {
 	FILE* f = fopen(filename, "rb");
 	if (!f)
 		return 0;
@@ -216,22 +280,23 @@ int read_file(frontend* fe, char* filename) {
 
 	fread(str, len, 1, f);
 
-	fe->file = filename;
+	mod->name = filename;
 
-	fe->s.start = str;
-	fe->s.end = str + len;
+	mod->s.start = str;
+	mod->s.end = str + len;
 
 	return 1;
 }
 
 void module_init(module* b) {
 	b->ids = map_new();
+	b->tokens = vector_new(sizeof(token));
 	map_configure_string_key(&b->ids, sizeof(id));
 }
 
 frontend make_frontend() {
-	frontend fe = {.tokens=vector_new(sizeof(token))};
-	module_init(&fe.global);
+	frontend fe = {.allocations=map_new()};
+	map_configure_ptr_key(&fe.allocations, sizeof(trace));
 
 	FRONTEND = &fe;
 
@@ -239,7 +304,28 @@ frontend make_frontend() {
 }
 
 void value_free(value* val) {
+	vector_iterator sub_iter = vector_iterate(&val->substitutes);
+	while (vector_next(&sub_iter)) {
+		exp_idx_free(((sub_idx*) sub_iter.x)->idx);
+	}
+
 	vector_free(&val->substitutes);
+
+	vector_iterator group_iter = vector_iterate(&val->groups);
+	while (vector_next(&group_iter)) {
+		vector* condition = &((sub_group*) group_iter.x)->condition;
+		vector_iterator cond_iter = vector_iterate(condition);
+		while (vector_next(&cond_iter)) {
+			sub_cond* cond = cond_iter.x;
+
+			if (cond->exp) expr_free(cond->exp);
+			else exp_idx_free(cond->idx);
+		}
+
+		vector_free(condition);
+	}
+
+	vector_free(&val->groups);
 	map_free(&val->substitute_idx);
 	if (val->exp) expr_free(val->exp);
 }
@@ -249,9 +335,20 @@ void id_free(id* xid) {
 	while (vector_next(&val_iter)) {
 		value_free(val_iter.x);
 	}
+
+	vector_free(&xid->val);
 }
 
 void module_free(module* b) {
+	drop(b->s.start);
+
+	vector_iterator i = vector_iterate(&b->tokens);
+	while (vector_next(&i)) {
+		token_free(i.x);
+	}
+
+	vector_free(&b->tokens);
+
 	map_iterator iter = map_iterate(&b->ids);
 	while (map_next(&iter)) {
 		id_free(iter.x);
@@ -261,14 +358,6 @@ void module_free(module* b) {
 }
 
 void frontend_free(frontend* fe) {
-	module_free(&fe->global);
-
-	free(fe->s.start);
-
-	vector_iterator i = vector_iterate(&fe->tokens);
-	while (vector_next(&i)) {
-		token_free(i.x);
-	}
-
-	vector_free(&fe->tokens);
+	module_free(&fe->current);
+	memcheck();
 }

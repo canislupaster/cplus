@@ -5,18 +5,6 @@
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
-typedef struct {
-	enum {
-		num_decimal,
-		num_integer,
-	} ty;
-
-	union {
-		uint64_t uint;
-		int64_t integer;
-		long double decimal;
-	};
-} num;
 
 num* num_new(num x);
 
@@ -28,32 +16,23 @@ enum kind {
 };
 typedef enum kind kind;
 typedef struct expr expr;
-typedef struct {
+typedef struct span span;
+typedef struct module module;
+struct module {
+	char* name;
+
+	span s;
+	vector tokens;
+
+	map ids;
+};
+struct span {
+	module* mod;
+
 	char* start;
 	char* end;
-} span;
-
-int cost(expr* exp);
-
-int binary(expr* exp);
-
-typedef struct id id;
-typedef struct {
-	char* qualifier;
-	char* x;
-} name;
-typedef struct {
-	unsigned long size;
-
-	unsigned long length;
-	char* data;
-} vector;
-struct id {
-	span s;
-	char* name;
-	vector val; //multiple dispatch of different substitute <-> exp
-	unsigned precedence;
 };
+typedef struct id id;
 struct expr {
 	span s;
 	int cost; //memoized cost
@@ -106,3 +85,10 @@ extern num ZERO;
 void commute(num* num1, num* num2);
 
 void convert_dec(num* n);
+
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
+};

@@ -6,20 +6,20 @@
 int main(int argc, char** argv) {
 	frontend fe = make_frontend();
 
-	fe.file = "stdin";
-
+	module_init(&fe.current);
 	while (1) {
+		fe.current.name = "stdin";
+
 		set_col(stdout, WHITE);
 		printf("stdin > ");
 
 		size_t len;
 		char* line = fgetln(stdin, &len);
 
-		fe.len = (unsigned long) len;
-		fe.s.start = line;
-		fe.s.end = line + fe.len;
+		fe.current.s.start = line;
+		fe.current.s.end = line + len;
 
-		if (span_eq(fe.s, "quit")) {
+		if (span_eq(fe.current.s, "quit")) {
 			frontend_free(&fe);
 			return 0;
 		}
@@ -32,7 +32,10 @@ int main(int argc, char** argv) {
 		}
 
 		//clear tokens and errored
-		vector_clear(&fe.tokens);
 		fe.errored = 0;
+
+		module old_mod = fe.current;
+		fe.current.tokens = vector_new(sizeof(token)); //clear tokens
 	}
+
 }

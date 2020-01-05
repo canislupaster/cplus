@@ -58,7 +58,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 				expr* first = iter.x->inner;
 				expr* amount = iter.other;
 
-				free(exp);
+				drop(exp);
 
 				exp = expr_new();
 				exp->kind = exp_add;
@@ -70,7 +70,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 					case exp_num: {
 						exp->binary.right->kind = exp_num;
 						exp->binary.right->by = num_new(num_invert(*amount->by));
-						free(amount);
+						drop(amount);
 						break;
 					}
 					default: {
@@ -123,7 +123,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 					expr_free(exp->_for.base);
 
 					expr* step = exp->_for.step;
-					free(exp);
+					drop(exp);
 
 					exp = step; //i is one and x/base is not used, return step
 				}
@@ -139,7 +139,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 
 				expr* i = exp->_for.i;
 				expr* base = exp->_for.base;
-				free(exp);
+				drop(exp);
 
 				expr* mult = expr_new();
 				mult->kind = exp_mul;
@@ -164,7 +164,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 
 				expr* i = exp->_for.i;
 				expr* base = exp->_for.base;
-				free(exp);
+				drop(exp);
 
 				expr* powd = expr_new();
 				powd->kind = exp_pow;
@@ -205,4 +205,6 @@ void reduce(expr** exp) {
 	optimizer opt = {.usages=map_new()};
 	map_configure_ulong_key(&opt.usages, 0);
 	opt_reduce(exp, &opt);
+
+	map_free(&opt.usages);
 }

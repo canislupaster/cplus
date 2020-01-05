@@ -119,7 +119,7 @@ expr* parse_left_expr(parser* p, int bind) {
 		exp->_for.i = parse_expr(p, bind, 1);
 		if (!exp->_for.i) {
 			throw_here(p, "expected quantifier of for expression");
-			free(exp);
+			drop(exp);
 			return NULL;
 		}
 
@@ -135,7 +135,7 @@ expr* parse_left_expr(parser* p, int bind) {
 			exp->_for.base = parse_expr(p, bind, 1);
 			if (!exp->_for.base) {
 				throw_here(p, "expected base expression");
-				free(exp);
+				drop(exp);
 				expr_free(exp->_for.i);
 				return NULL;
 			}
@@ -144,7 +144,7 @@ expr* parse_left_expr(parser* p, int bind) {
 
 			if (!x) {
 				throw_here(p, "implicit reference in base of for expression is not defined");
-				free(exp);
+				drop(exp);
 				expr_free(exp->_for.i);
 				return NULL;
 			}
@@ -169,7 +169,7 @@ expr* parse_left_expr(parser* p, int bind) {
 		exp->_for.step = parse_expr(p, bind, 1);
 
 		if (!exp->_for.step) {
-			free(exp);
+			drop(exp);
 			expr_free(exp->_for.i);
 			expr_free(exp->_for.base);
 			return NULL;
@@ -217,7 +217,7 @@ expr* parse_left_expr(parser* p, int bind) {
 			unsigned long* a = parse_unqualified_access(p, p->current.val.name->x);
 			if (p->current.val.name->qualifier || !a) {
 				throw_here(p, "name does not reference an identifier, reducer, or substitute");
-				free(exp);
+				drop(exp);
 				return NULL;
 			}
 
@@ -373,7 +373,7 @@ expr* parse_expr(parser* p, int do_bind, unsigned op_prec) {
 			}
 
 			if (!did_bind) {
-				throw(&applier->s, "could not bind to callee");
+				throw(&applier_name->s, "could not bind to callee");
 				note(&applier->s, "defined here");
 				return NULL;
 			}
@@ -415,6 +415,7 @@ int parse_id(parser* p) {
 
 			gen_condition(&val, exp, 0);
 			gen_substitutes(&val, exp, 0);
+			expr_free(exp);
 		} else {
 			return throw_here(p, "expected substitute");
 		}
@@ -447,6 +448,7 @@ int parse_id(parser* p) {
 			//generation phase
 			gen_condition(&val, exp, i++);
 			gen_substitutes(&val, exp, i++);
+			expr_free(exp);
 		} else {
 			return throw_here(p, "expected = or substitute");
 		}
@@ -494,9 +496,9 @@ int parse_mod(parser* p, module* b) {
 
 void parse(frontend* fe) {
 	parser p = {fe, .pos=0};
-	p.mod = &p.fe->global;
+	p.mod = &p.fe->current;
 
-	parse_mod(&p, &p.fe->global);
+	parse_mod(&p, &p.fe->current);
 }
 
 void print_module(module* b) {

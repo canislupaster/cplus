@@ -10,11 +10,11 @@ vector vector_new(unsigned long size) {
 void* vector_push(vector* vec) {
 	vec->length++;
 
-	//allocate or reallocate
+	//allocate or resizeate
 	if (!vec->data)
-		vec->data = malloc(vec->size);
+		vec->data = heap(vec->size);
 	else
-		vec->data = realloc(vec->data, vec->size * vec->length);
+		vec->data = resize(vec->data, vec->size * vec->length);
 
 	return vec->data + (vec->length - 1) * vec->size;
 }
@@ -30,7 +30,7 @@ int vector_pop(vector* vec) {
 		return 0;
 
 	vec->length--;
-	vec->data = realloc(vec->data, vec->size * vec->length);
+	vec->data = resize(vec->data, vec->size * vec->length);
 
 	return 1;
 }
@@ -39,11 +39,10 @@ void* vector_popcpy(vector* vec) {
 	if (vec->length == 0)
 		return NULL;
 
-	void* x = malloc(vec->size);
-	memcpy(x, vec->data + vec->size * vec->length - 1, vec->size);
+	void* x = heapcpy(vec->size, vec->data + vec->size * vec->length - 1);
 
 	vec->length--;
-	vec->data = realloc(vec->data, vec->size * vec->length);
+	vec->data = resize(vec->data, vec->size * vec->length);
 
 	return x;
 }
@@ -53,7 +52,7 @@ int vector_remove(vector* vec, unsigned long i) {
 	if (i == vec->length - 1) {
 		vec->length--;
 
-		vec->data = realloc(vec->data, vec->size * vec->length);
+		vec->data = resize(vec->data, vec->size * vec->length);
 	}
 
 	//sanity checks
@@ -77,7 +76,7 @@ void* vector_get(vector* vec, unsigned long i) {
 void* vector_set(vector* vec, unsigned long i) {
 	if (i >= vec->length) {
 		vec->length = i + 1;
-		vec->data = realloc(vec->data, vec->size * vec->length);
+		vec->data = resize(vec->data, vec->size * vec->length);
 	}
 
 	return vec->data + i * vec->size;
@@ -111,13 +110,12 @@ int vector_next(vector_iterator* iter) {
 void vector_cpy(vector* from, vector* to) {
 	*to = *from;
 
-	to->data = malloc(from->size * from->length);
-	memcpy(to->data, from->data, from->size * from->length);
+	to->data = heapcpy(from->size * from->length, from->data);
 }
 
 void vector_clear(vector* vec) {
 	if (vec->data) {
-		free(vec->data);
+		drop(vec->data);
 		vec->data = NULL;
 	}
 
@@ -126,5 +124,5 @@ void vector_clear(vector* vec) {
 
 void vector_free(vector* vec) {
 	if (vec->data)
-		free(vec->data);
+		drop(vec->data);
 }

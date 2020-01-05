@@ -39,9 +39,12 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 	if (def(exp)) {
 		*out = *exp;
 
-		if (!is_literal(exp->_for.base)) return evaluate(ev, exp->_for.base, out->_for.base);
-		if (!is_literal(exp->_for.step)) return evaluate(ev, exp->_for.base, out->_for.step);
-		if (!is_literal(exp->_for.i)) return evaluate(ev, exp->_for.base, out->_for.i);
+		int ret = 0;
+		if (!is_literal(exp->_for.base)) ret = 1, evaluate(ev, exp->_for.base, out->_for.base);
+		if (!is_literal(exp->_for.step)) ret = 1, evaluate(ev, exp->_for.base, out->_for.step);
+		if (!is_literal(exp->_for.i)) ret = 1, evaluate(ev, exp->_for.base, out->_for.i);
+
+		if (ret) return 1;
 	}
 
 	if (exp->kind == exp_for) {

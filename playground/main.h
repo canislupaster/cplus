@@ -1,14 +1,24 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
+
+typedef struct module module;
 typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+typedef struct span span;
+struct span {
+	module* mod;
+
 	char* start;
 	char* end;
-} span;
+};
 typedef struct {
 	unsigned long size;
 
@@ -29,20 +39,20 @@ typedef struct {
 	unsigned long num_buckets;
 	char* buckets;
 } map;
-typedef struct {
-	map ids;
-} module;
-typedef struct {
-	char* file;
-	span s;
-	unsigned long len;
+struct module {
+	char* name;
 
+	span s;
 	vector tokens;
 
-	module global;
+	map ids;
+};
+typedef struct {
+	module current;
 
-	/// tells whether to continue into codegen
-	char errored;
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map allocations; //ptr to trace
 } frontend;
 
 void frontend_free(frontend* fe);
@@ -55,6 +65,6 @@ void parse(frontend* fe);
 
 void lex(frontend* fe);
 
-int read_file(frontend* fe, char* filename);
+int read_file(module* mod, char* filename);
 
 frontend make_frontend();
