@@ -6,11 +6,16 @@ vector vector_new(unsigned long size) {
 	return vec;
 }
 
+void vector_init(vector* vec, unsigned long length) {
+	vec->data = malloc(vec->size * length);
+	vec->length = length;
+}
+
 /// returns ptr to insertion point
 void* vector_push(vector* vec) {
 	vec->length++;
 
-	//allocate or resizeate
+	//allocate or resize
 	if (!vec->data)
 		vec->data = heap(vec->size);
 	else
@@ -71,6 +76,29 @@ void* vector_get(vector* vec, unsigned long i) {
 	}
 
 	return vec->data + i * vec->size;
+}
+
+void* vector_insert(vector* vec, unsigned long i) {
+	vec->length++;
+
+	if (!vec->data)
+		vec->data = heap(vec->size);
+	else
+		vec->data = resize(vec->data, vec->size * vec->length);
+
+	if (vec->length > i)
+		memcpy(vec->data + vec->size * (i + 1),
+					 vec->data + vec->size * i,
+					 (vec->length - i) * vec->size);
+
+	return vec->data + vec->size * i;
+}
+
+void* vector_insertcpy(vector* vec, unsigned long i, void* x) {
+	void* pos = vector_insert(vec, i);
+	memcpy(pos, x, vec->size);
+
+	return pos;
 }
 
 void* vector_set(vector* vec, unsigned long i) {

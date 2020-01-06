@@ -1,11 +1,25 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
+
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
 
 void map_free(map* map);
 
@@ -16,6 +30,16 @@ map map_new();
 typedef struct expr expr;
 typedef struct span span;
 typedef struct module module;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
 struct module {
 	char* name;
 
@@ -30,7 +54,38 @@ struct span {
 	char* start;
 	char* end;
 };
+
+int cost(expr* exp);
+
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
+typedef struct {
+	enum {
+		num_decimal,
+		num_integer,
+	} ty;
+
+	union {
+		uint64_t uint;
+		int64_t integer;
+		long double decimal;
+	};
+} num;
+
+int binary(expr* exp);
+
 typedef struct id id;
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
+};
 struct expr {
 	span s;
 	int cost; //memoized cost
@@ -66,6 +121,27 @@ struct expr {
 void reduce(expr** exp);
 
 typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
 
 int vector_next(vector_iterator* iter);
 
@@ -102,39 +178,25 @@ expr* expr_new();
 
 void drop(void* ptr);
 
+typedef struct {
+	expr* exp;
+	expr* x;
+	expr* other;
+
+	char right;
+} binary_iterator;
+
 int binary_next(binary_iterator* iter);
 
 binary_iterator binary_iter(expr* exp);
 
+typedef struct {
+	void* val;
+	char exists;
+} map_insert_result;
+
 map_insert_result map_insert(map* map, void* key);
-
-enum kind {
-	exp_bind, exp_num,
-	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-	//a conditional is a for expressed without the base, def is a for if i=1
-			exp_cond, exp_def, exp_for, exp_call //2-3 args
-};
-typedef enum kind kind;
-
-int binary(expr* exp);
 
 int unary(expr* exp);
 
-int cost(expr* exp);
-
 extern const int CALL_COST;
-struct value {
-	span s;
-	vector groups; //conditions for substitutes in each expression
-	vector substitutes; //vector of sub_idx specifying substitutes
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
-struct id {
-	span s;
-	char* name;
-	vector val; //multiple dispatch of different substitute <-> exp
-	unsigned precedence;
-};

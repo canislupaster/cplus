@@ -7,24 +7,28 @@
 #include "math.h"
 #include "string.h"
 
-typedef struct module module;
+struct module;
 typedef struct {
 	char* qualifier;
 	char* x;
 } name;
-typedef struct span span;
+struct span;
+typedef struct module module;
 struct span {
 	module* mod;
 
 	char* start;
 	char* end;
 };
-typedef struct {
-	unsigned long size;
+typedef struct span span;
+struct module {
+	char* name;
 
-	unsigned long length;
-	char* data;
-} vector;
+	span s;
+	vector tokens;
+
+	map ids;
+};
 typedef struct {
 	unsigned long key_size;
 	unsigned long size;
@@ -39,14 +43,6 @@ typedef struct {
 	unsigned long num_buckets;
 	char* buckets;
 } map;
-struct module {
-	char* name;
-
-	span s;
-	vector tokens;
-
-	map ids;
-};
 typedef struct {
 	module current;
 

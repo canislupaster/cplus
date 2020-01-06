@@ -5,12 +5,6 @@
 #include "math.h"
 #include "string.h"
 
-#define TRACE_SIZE 10
-
-typedef struct {
-	void* stack[TRACE_SIZE];
-} trace;
-
 //VECTOR
 
 typedef struct {

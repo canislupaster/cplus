@@ -7,14 +7,14 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     add_compile_definitions(BUILD_DEBUG)
 endif ()
 
-add_executable(makeheaders makeheaders/makeheaders.c)
+add_executable(headergen headergen/headergen.c ./src/hashtable.c ./src/vector.c ./src/util.c ./src/siphash.c)
 
-file(GLOB SRC ./makeheaders/test/*.[ch])
+file(GLOB SRC headergen/test/*.[ch])
 add_library(makeheaders-test ${SRC})
-add_dependencies(makeheaders-test makeheaders)
+add_dependencies(makeheaders-test headergen)
 
-add_custom_target(gen-headers ALL /bin/sh makeheaders/cmake-headers.sh ${CMAKE_BINARY_DIR} WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-add_dependencies(gen-headers makeheaders)
+add_custom_target(gen-headers ALL /bin/sh headergen/cmake-headers.sh ${CMAKE_BINARY_DIR} WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+add_dependencies(gen-headers headergen)
 
 file(GLOB SRC ./src/*.h ./src/*.c)
 #add_executable(cplus ${SRC})

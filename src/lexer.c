@@ -51,7 +51,7 @@ num* num_new(num x) {
 	return heapcpy(sizeof(num), &x);
 }
 
-const char* RESERVED = " \n\r/(),.+-=\"";
+const char* SKIP = " \n\r/(),.+-=\"";
 name ADD_NAME = {.qualifier=NULL, .x="+"};
 name SUB_NAME = {.qualifier=NULL, .x="-"};
 name EQ_NAME = {.qualifier=NULL, .x="="};
@@ -61,7 +61,7 @@ void lex_name(lexer* l, char state) {
 	name n;
 	n.qualifier = NULL;
 
-	while ((l->x = lex_peek(l)) && (l->x == state || strchr(RESERVED, l->x) == NULL)) {
+	while ((l->x = lex_peek(l)) && (l->x == state || strchr(SKIP, l->x) == NULL)) {
 		if (l->x == '.') {
 			n.qualifier = spanstr(&l->pos);
 			lex_mark(l);

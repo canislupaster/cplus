@@ -9,11 +9,36 @@ void drop(void* ptr);
 #include "math.h"
 #include "string.h"
 
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
+
 void vector_free(vector* vec);
 
 typedef struct expr expr;
 typedef struct span span;
 typedef struct module module;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
 struct module {
 	char* name;
 
@@ -28,7 +53,38 @@ struct span {
 	char* start;
 	char* end;
 };
+
+int cost(expr* exp);
+
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
+typedef struct {
+	enum {
+		num_decimal,
+		num_integer,
+	} ty;
+
+	union {
+		uint64_t uint;
+		int64_t integer;
+		long double decimal;
+	};
+} num;
+
+int binary(expr* exp);
+
 typedef struct id id;
+struct id {
+	span s;
+	char* name;
+	vector val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
+};
 struct expr {
 	span s;
 	int cost; //memoized cost
@@ -64,13 +120,11 @@ struct expr {
 void expr_free(expr* exp);
 
 typedef struct exp_idx exp_idx;
-enum kind {
-	exp_bind, exp_num,
-	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-	//a conditional is a for expressed without the base, def is a for if i=1
-			exp_cond, exp_def, exp_for, exp_call //2-3 args
-};
-typedef enum kind kind;
+typedef enum {
+	move_left, move_right, move_inner,
+	move_for_i, move_for_base, move_for_step,
+	move_call_i
+} move_kind;
 struct exp_idx {
 	struct exp_idx* from;
 	move_kind kind;
@@ -88,6 +142,14 @@ int remove_num(expr** eref, num* num);
 
 expr* extract_operand(expr* exp, unsigned long x);
 
+typedef struct {
+	expr* exp;
+	expr* x;
+	expr* other;
+
+	char right;
+} binary_iterator;
+
 int binary_next(binary_iterator* iter);
 
 binary_iterator binary_iter(expr* exp);
@@ -95,6 +157,20 @@ binary_iterator binary_iter(expr* exp);
 int binding_exists(expr* exp, unsigned long x);
 
 typedef struct value value;
+struct value {
+	span s;
+	vector groups; //conditions for substitutes in each expression
+	vector substitutes; //vector of sub_idx specifying substitutes
+
+	map substitute_idx;
+
+	struct expr* exp;
+};
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
 
 int substitute(expr* exp, substitution* sub);
 
@@ -105,15 +181,6 @@ struct sub_idx {
 	unsigned int i;
 	exp_idx* idx;
 };
-struct value {
-	span s;
-	vector groups; //conditions for substitutes in each expression
-	vector substitutes; //vector of sub_idx specifying substitutes
-
-	map substitute_idx;
-
-	struct expr* exp;
-};
 
 void gen_substitutes(value* val, expr* exp, unsigned int i);
 
@@ -122,6 +189,13 @@ int static_condition(substitution* sub, unsigned long i, expr* root);
 int num_eq(num num1, num num2);
 
 int literal_eq(expr* exp1, expr* exp2);
+
+typedef struct {
+	exp_idx* idx;
+
+	expr* exp; //make sure it is equivalent to an expression at leaf-binding
+	kind kind; //otherwise check kind and descend through substitute indexes
+} sub_cond;
 
 int condition(substitution* sub, unsigned long i, expr* root);
 
@@ -182,9 +256,15 @@ int def(expr* exp);
 
 int unary(expr* exp);
 
-int binary(expr* exp);
-
 int is_value(expr* exp);
+
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
 
 int vector_next(vector_iterator* iter);
 
@@ -194,18 +274,46 @@ int is_literal(expr* exp);
 
 vector vector_new(unsigned long size);
 
-struct id {
-	span s;
-	char* name;
-	vector val; //multiple dispatch of different substitute <-> exp
-	unsigned precedence;
-};
-
 void call_new(expr* exp, id* i);
 
-expr* expr_new_p(parser* p, expr* first);
+typedef struct {
+	module current;
 
-int cost(expr* exp);
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map allocations; //ptr to trace
+} frontend;
+typedef enum {
+	t_name, t_non_bind,
+	t_add, t_sub,
+	t_ellipsis, t_comma,
+	t_in, t_for,
+	t_eq, t_lparen, t_rparen,
+	t_str, t_num,
+	t_sync, t_eof
+} token_type;
+typedef struct {
+	token_type tt;
+	span s;
+
+	union {
+		name* name;
+		char* str;
+		num* num;
+	} val;
+} token;
+typedef struct {
+	frontend* fe;
+	token current;
+
+	unsigned long pos;
+
+	module* mod;
+	map* substitute_idx;
+	vector reducers;
+} parser;
+
+expr* expr_new_p(parser* p, expr* first);
 
 void* heap(size_t size);
 

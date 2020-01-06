@@ -1,8 +1,6 @@
 #include "frontend.h"
 #include "colors.h"
 
-#include "execinfo.h"
-
 frontend* FRONTEND = NULL; //global frontend
 
 const span SPAN_NULL = {.start=NULL};
@@ -173,83 +171,6 @@ void warn(const span* s, const char* x) {
 
 void note(const span* s, const char* x) {
 	msg(FRONTEND, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
-}
-
-trace stacktrace() {
-	trace x = {};
-	backtrace(x.stack, TRACE_SIZE);
-
-	return x;
-}
-
-void* heap(size_t size) {
-	void* res = malloc(size);
-	trace tr = stacktrace();
-
-	if (!res) {
-		throw(&SPAN_NULL, "out of memory!");
-		print_trace(&tr);
-		exit(1);
-	}
-
-	if (FRONTEND) map_insertcpy(&FRONTEND->allocations, &res, &tr);
-
-	return res;
-}
-
-void* heapcpy(size_t size, const void* val) {
-	void* res = heap(size);
-	memcpy(res, val, size);
-	return res;
-}
-
-void* resize(void* ptr, size_t size) {
-	void* res = realloc(ptr, size);
-
-	if (!res) {
-		throw(&SPAN_NULL, "out of memory!");
-		exit(1);
-	}
-
-	return res;
-}
-
-void drop(void* ptr) {
-	free(ptr);
-	if (FRONTEND) map_remove(&FRONTEND->allocations, &ptr);
-}
-
-void print_trace(trace* trace) {
-	printf("stack trace: \n");
-
-	char** data = backtrace_symbols(trace->stack, TRACE_SIZE);
-
-	for (int i = 0; i < TRACE_SIZE; i++) {
-		printf("%s\n", data[i]);
-	}
-
-	drop(data);
-}
-
-/// done during frontend_free
-void memcheck() {
-	if (!FRONTEND) return;
-
-	if (FRONTEND->allocations.length > 0) {
-		throw(&SPAN_NULL, "memory leak detected\n");
-
-		map_iterator iter = map_iterate(&FRONTEND->allocations);
-		while (map_next(&iter)) {
-			printf("stacktrace for object at %ptr\n\n", *(void**) iter.key);
-			print_trace(iter.x);
-			printf("\n\n\n");
-		}
-	}
-
-	frontend* fe = FRONTEND;
-	FRONTEND = NULL;
-
-	map_free(&fe->allocations);
 }
 
 void print_num(num* n) {

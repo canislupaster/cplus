@@ -1,6 +1,6 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
-
+void memcheck();
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -8,6 +8,10 @@
 #include "string.h"
 
 typedef struct module module;
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
 typedef struct span span;
 struct span {
 	module* mod;
@@ -15,6 +19,26 @@ struct span {
 	char* start;
 	char* end;
 };
+typedef struct {
+	unsigned long size;
+
+	unsigned long length;
+	char* data;
+} vector;
+typedef struct {
+	unsigned long key_size;
+	unsigned long size;
+
+	/// hash and compare
+	uint64_t (* hash)(void*);
+
+	/// compare(&left, &right)
+	int (* compare)(void*, void*);
+
+	unsigned long length;
+	unsigned long num_buckets;
+	char* buckets;
+} map;
 struct module {
 	char* name;
 
@@ -23,8 +47,67 @@ struct module {
 
 	map ids;
 };
+typedef struct {
+	module current;
+
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map allocations; //ptr to trace
+} frontend;
 
 void frontend_free(frontend* fe);
+
+#define CONTROL_BYTES 16
+typedef struct {
+	uint8_t control_bytes[CONTROL_BYTES];
+} bucket;
+typedef struct {
+	map* map;
+
+	char c;
+	unsigned long bucket;
+
+	void* key;
+	void* x;
+	char current_c;
+	bucket* bucket_ref;
+} map_iterator;
+
+int map_next(map_iterator* iterator);
+
+map_iterator map_iterate(map* map);
+
+typedef enum {
+	t_name, t_non_bind,
+	t_add, t_sub,
+	t_ellipsis, t_comma,
+	t_in, t_for,
+	t_eq, t_lparen, t_rparen,
+	t_str, t_num,
+	t_sync, t_eof
+} token_type;
+typedef struct {
+	enum {
+		num_decimal,
+		num_integer,
+	} ty;
+
+	union {
+		uint64_t uint;
+		int64_t integer;
+		long double decimal;
+	};
+} num;
+typedef struct {
+	token_type tt;
+	span s;
+
+	union {
+		name* name;
+		char* str;
+		num* num;
+	} val;
+} token;
 
 void token_free(token* t);
 
@@ -40,7 +123,22 @@ struct id {
 
 void id_free(id* xid);
 
+void map_free(map* map);
+
 typedef struct expr expr;
+
+int cost(expr* exp);
+
+enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+			exp_cond, exp_def, exp_for, exp_call //2-3 args
+};
+typedef enum kind kind;
+
+int binary(expr* exp);
+
 struct expr {
 	span s;
 	int cost; //memoized cost
@@ -76,41 +174,25 @@ struct expr {
 void expr_free(expr* exp);
 
 typedef struct exp_idx exp_idx;
-enum kind {
-	exp_bind, exp_num,
-	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
-	//a conditional is a for expressed without the base, def is a for if i=1
-			exp_cond, exp_def, exp_for, exp_call //2-3 args
-};
-typedef enum kind kind;
-typedef struct sub_group sub_group;
-struct sub_group {
-	vector condition;
-};
-typedef struct value value;
-
-int condition(substitution* sub, unsigned long i, expr* root);
-
-void vector_free(vector* vec);
-
-typedef struct sub_idx sub_idx;
+typedef enum {
+	move_left, move_right, move_inner,
+	move_for_i, move_for_base, move_for_step,
+	move_call_i
+} move_kind;
 struct exp_idx {
 	struct exp_idx* from;
 	move_kind kind;
 	unsigned long i; //index of value
 	unsigned long i2; //index of substitute
 };
-struct sub_idx {
-	unsigned int i;
+typedef struct {
 	exp_idx* idx;
-};
 
-void exp_idx_free(exp_idx* idx);
-
-int vector_next(vector_iterator* iter);
-
-vector_iterator vector_iterate(vector* vec);
-
+	expr* exp; //make sure it is equivalent to an expression at leaf-binding
+	kind kind; //otherwise check kind and descend through substitute indexes
+} sub_cond;
+typedef struct sub_group sub_group;
+typedef struct value value;
 struct value {
 	span s;
 	vector groups; //conditions for substitutes in each expression
@@ -120,8 +202,46 @@ struct value {
 
 	struct expr* exp;
 };
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector val; //expression for every substitute indexes
+} substitution;
+
+int condition(substitution* sub, unsigned long i, expr* root);
+
+struct sub_group {
+	vector condition;
+};
+
+void vector_free(vector* vec);
+
+typedef struct sub_idx sub_idx;
+struct sub_idx {
+	unsigned int i;
+	exp_idx* idx;
+};
+
+void exp_idx_free(exp_idx* idx);
+
+typedef struct {
+	vector* vec;
+
+	unsigned long i;
+	char rev;
+	void* x;
+} vector_iterator;
+
+int vector_next(vector_iterator* iter);
+
+vector_iterator vector_iterate(vector* vec);
 
 void value_free(value* val);
+
+#define TRACE_SIZE 10
+typedef struct {
+	void* stack[TRACE_SIZE];
+} trace;
 
 void map_configure_ptr_key(map* map, unsigned long size);
 
@@ -139,28 +259,6 @@ int is_name(token* x);
 
 void print_num(num* n);
 
-void map_free(map* map);
-
-int map_next(map_iterator* iterator);
-
-map_iterator map_iterate(map* map);
-
-void memcheck();
-
-int map_remove(map* map, void* key);
-
-void* resize(void* ptr, size_t size);
-
-void* heapcpy(size_t size, const void* val);
-
-map_insert_result map_insertcpy(map* map, void* key, void* v);
-
-void print_trace(trace* trace);
-
-#define TRACE_SIZE 10
-
-trace stacktrace();
-
 void note(const span* s, const char* x);
 
 void warn(const span* s, const char* x);
@@ -177,6 +275,11 @@ vector vector_new(unsigned long size);
 
 #if _WIN32
 void set_col(FILE *f,char color);
+#endif
+#if !(_WIN32)
+
+void set_col(FILE* f, char color);
+
 #endif
 
 void msg(frontend* fe,
