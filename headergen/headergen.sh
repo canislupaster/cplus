@@ -1,0 +1,1 @@
+"%1"/headergen ./test/*.[ch]

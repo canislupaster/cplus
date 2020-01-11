@@ -1,11 +1,29 @@
-#include "parser.h"
+#include "hashtable.h"
+#include "vector.h"
+#include "util.h"
+
+#include "numbers.h"
+#include "frontend.h"
+#include "lexer.h"
+#include "expr.h"
+
+typedef struct {
+	frontend* fe;
+	token current;
+
+	unsigned long pos;
+
+	module* mod;
+	map* substitute_idx;
+	vector reducers;
+} parser;
 
 int throw_here(parser* p, const char* x) {
 	return throw(&p->current.s, x);
 }
 
 token* parse_peek_x(parser* p, int x) {
-	token* tok = vector_get(&p->fe->tokens, p->pos + x - 1);
+	token* tok = vector_get(&p->fe->current.tokens, p->pos + x - 1);
 
 	if (tok && tok->tt == t_sync) {
 		return parse_peek_x(p, x + 1);
@@ -27,7 +45,7 @@ void parse_next(parser* p) {
 }
 
 int peek_sync(parser* p) {
-	return ((token*) vector_get(&p->fe->tokens, p->pos))->tt == t_sync;
+	return ((token*) vector_get(&p->fe->current.tokens, p->pos))->tt == t_sync;
 }
 
 int parse_sync(parser* p) {
@@ -103,6 +121,8 @@ unsigned long* parse_unqualified_access(parser* p, char* x) {
 	unsigned long* idx = map_find(p->substitute_idx, &x);
 	return idx;
 }
+
+expr* parse_expr(parser* p, int do_bind, unsigned op_prec);
 
 expr* parse_left_expr(parser* p, int bind) {
 	expr* exp;

@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include "math.h"
 #include "string.h"
-
 typedef struct {
 	enum {
 		num_decimal,
@@ -17,10 +16,8 @@ typedef struct {
 		int64_t integer;
 		long double decimal;
 	};
-} num;
-
-num* num_new(num x);
-
+}num;
+num *num_new(num x);
 enum kind {
 	exp_bind, exp_num,
 	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
@@ -34,27 +31,13 @@ typedef struct module module;
 typedef struct {
 	char* qualifier;
 	char* x;
-} name;
+}name;
 typedef struct {
 	unsigned long size;
 
 	unsigned long length;
 	char* data;
-} vector;
-typedef struct {
-	unsigned long key_size;
-	unsigned long size;
-
-	/// hash and compare
-	uint64_t (* hash)(void*);
-
-	/// compare(&left, &right)
-	int (* compare)(void*, void*);
-
-	unsigned long length;
-	unsigned long num_buckets;
-	char* buckets;
-} map;
+}vector;
 struct module {
 	char* name;
 
@@ -69,11 +52,8 @@ struct span {
 	char* start;
 	char* end;
 };
-
-int cost(expr* exp);
-
-int binary(expr* exp);
-
+int cost(expr *exp);
+int binary(expr *exp);
 typedef struct id id;
 struct id {
 	span s;
@@ -112,24 +92,14 @@ struct expr {
 		} call;
 	};
 };
-
-void set_num(expr* e, num n);
-
+void set_num(expr *e,num n);
 num num_invert(num n);
-
-num num_add(num num1, num num2);
-
-num num_pow(num num1, num num2);
-
-num num_div(num num1, num num2);
-
-num num_mul(num num1, num num2);
-
-int num_eq(num num1, num num2);
-
+num num_add(num num1,num num2);
+num num_pow(num num1,num num2);
+num num_div(num num1,num num2);
+num num_mul(num num1,num num2);
+int num_eq(num num1,num num2);
 extern num ONE;
 extern num ZERO;
-
-void commute(num* num1, num* num2);
-
-void convert_dec(num* n);
+void commute(num *num1,num *num2);
+void convert_dec(num *n);

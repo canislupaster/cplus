@@ -1,5 +1,4 @@
 /* This file was automatically generated.  Do not edit! */
 #undef INTERFACE
-char *isprintf(const char *fmt,...);
-int asprintf(char **strp,const char *fmt,...);
+void *heap(size_t size);
 int vasprintf(char **strp,const char *fmt,va_list ap);
