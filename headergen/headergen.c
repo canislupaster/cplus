@@ -4,6 +4,7 @@
 
 #define MIN(a, b) (a < b ? a : b)
 
+#include "../src/tinydir.h"
 #include "../src/util.h"
 #include "../src/hashtable.h"
 #include "../src/vector.h"
@@ -20,6 +21,8 @@ typedef struct {
 
 typedef struct file {
 	map objects;
+	vector deps; // file-wide deps from contents of functions/globals
+
 	vector sorted_objects;
 	vector includes; //resolved paths for lookup
 	vector raw_includes; //string in #include "..."
@@ -297,7 +300,7 @@ token* parse_token(state* state) {
 		state->file++;
 	}
 
-	return vector_pushcpy(&state->tokens, &tok);;
+	return vector_pushcpy(&state->tokens, &tok);
 }
 
 int token_eq(token* tok, char* str) {
@@ -447,7 +450,7 @@ void add_dep(state* state, char* dep) {
 	vector_pushcpy(state->deps, &dep);
 }
 
-object* parse_object(state* state, object* super);
+object* parse_object(state* state, object* super, int static_);
 
 int skip_type(state* state) {
 	parse_skip(state);
@@ -467,23 +470,17 @@ int skip_type(state* state) {
 	}
 }
 
-object* parse_object(state* state, object* super) {
+object* parse_object(state* state, object* super, int static_) {
 	if (super && skip_type(state)) {
 		return NULL;
 	}
 
 	object* obj = NULL;
 	char* name = NULL;
-	char static_ = 0;
 
 	vector* old_deps = state->deps;
 
 	token* first = parse_token(state);
-
-	if (first && token_eq(first, "static")) {
-		static_ = 1;
-		first = parse_token(state);
-	}
 
 	if (!first) return NULL;
 	char* start = first->start;
@@ -518,7 +515,7 @@ object* parse_object(state* state, object* super) {
 		return NULL;
 
 	} else if (token_eq(first, "typedef")) {
-		obj = parse_object(state, NULL); //parse thing inside
+		obj = parse_object(state, NULL, static_); //parse thing inside
 		if (!obj) {
 			//probably a fwd declaration / raw dep, make empty obj
 			obj = object_new(state);
@@ -527,6 +524,7 @@ object* parse_object(state* state, object* super) {
 		name = token_str(state, parse_token(state));
 
 		obj->declaration = affix(range(start, state->file), ";");
+		skip_sep(state);
 	} else if (token_eq(first, "enum")) {
 		obj = super ? super : object_new(state); //choose object to reference depending on superior object
 
@@ -560,15 +558,13 @@ object* parse_object(state* state, object* super) {
 		if (parse_start_brace(state)) {
 			obj = super ? super : object_new(state); //used so lower-order objects reference most superior object
 
-			char* ty_prefix = "";
-
 			while (!parse_end_brace(state)) {
-				parse_object(state, obj); //parse field type, add deps
+				parse_object(state, obj, static_); //parse field type, add deps
 				if (!parse_sep(state)) parse_token(state); // parse field name or dont (ex. anonymous union)
 				//parse any addendums
 				if (!parse_sep(state)) {
 					while (!parse_sep(state)) {
-						parse_object(state, 0);
+						parse_object(state, 0, 1);
 					}
 				}
 
@@ -604,10 +600,16 @@ object* parse_global_object(state* state) {
 	vector* old_deps = state->deps;
 	object* obj = object_new(state);
 
+	int static_ = 0;
+
 	parse_skip(state);
+	if (skip_word(state, "static")) {
+		static_ = 1;
+	}
+
 	char* start = state->file;
 
-	object* ty = parse_object(state, NULL);
+	object* ty = parse_object(state, NULL, static_);
 	char* reset = state->file; //reset to ty if not a global variable/function
 
 	token* name_tok = parse_token(state);
@@ -623,12 +625,15 @@ object* parse_global_object(state* state) {
 
 		while (!parse_sep(state)) {
 			while (skip_type(state));
-			add_dep(state, token_str(state, parse_token(state)));
+			char* str = token_str(state, parse_token(state));
+			vector_pushcpy(&state->current->deps, &str);
 		}
+
+		skip_sep(state);
 
 	} else if (parse_start_paren(state)) { //function
 		while (!parse_end_paren(state)) {
-			parse_object(state, obj);
+			parse_object(state, obj, static_);
 			if (!parse_name(state)) parse_token(state); //parse argument name
 		}
 
@@ -639,11 +644,8 @@ object* parse_global_object(state* state) {
 				while (skip_type(state));
 
 				token* tok = parse_token(state);
-
-				if (tok) {
-					char* str = token_str(state, tok);
-					add_dep(state, str);
-				}
+				char* str = token_str(state, tok);
+				vector_pushcpy(&state->current->deps, &str);
 			}
 		}
 	} else {
@@ -652,7 +654,7 @@ object* parse_global_object(state* state) {
 	}
 
 	state->deps = old_deps;
-	map_insertcpy(&state->current->objects, &name, &obj);
+	if (!static_) map_insertcpy(&state->current->objects, &name, &obj);
 	return obj;
 }
 
@@ -724,6 +726,8 @@ int main(int argc, char** argv) {
 		new_file->objects = map_new();
 		map_configure_string_key(&new_file->objects, sizeof(object*));
 		new_file->sorted_objects = vector_new(sizeof(object*));
+		
+		new_file->deps = vector_new(sizeof(char*));
 
 		new_file->pub = 0;
 		new_file->includes = vector_new(sizeof(char*));
@@ -779,6 +783,15 @@ int main(int argc, char** argv) {
 					vector_pushcpy(&obj->include_deps, vector_get(&this->raw_includes, inc_iter.i-1));
 				}
 			}
+
+			vector_iterator dep_iter = vector_iterate(&this->deps);
+			while (vector_next(&dep_iter)) {
+				object** inc_obj = map_find(&inc_file->objects, dep_iter.x);
+				if (!inc_obj) continue;
+
+				inc_file->pub = 1;
+				pub_deps(inc_file, *inc_obj);
+			}
 		}
 	}
 
@@ -814,7 +827,7 @@ int main(int argc, char** argv) {
 
 		map_iterator pub_inc_iter = map_iterate(&gen_this->pub_includes);
 		while (map_next(&pub_inc_iter)) {
-			char* inc = *(char**) pub_inc_iter.x;
+			char* inc = *(char**) pub_inc_iter.key;
 			fwrite(inc, strlen(inc), 1, handle);
 
 			fprintf(handle, "\n");

@@ -14,5 +14,5 @@ typedef struct {
 		long double decimal;
 	};
 } num;
-extern ;
-num ONE;
+extern num ONE;
+int num_eq(num num1, num num2);

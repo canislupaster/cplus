@@ -30,12 +30,12 @@ typedef struct {
 typedef struct {
 	map* map;
 
-	char c;
+	unsigned char c;
 	unsigned long bucket;
 
 	void* key;
 	void* x;
-	char current_c;
+	unsigned char current_c;
 	bucket* bucket_ref;
 } map_iterator;
 
@@ -63,8 +63,8 @@ typedef struct {
 
 	bucket* current;
 	/// temporary storage for c when matching
-	char c;
-	} map_probe_iterator;
+	unsigned char c;
+} map_probe_iterator;
 
 static uint64_t make_h1(uint64_t hash) {
 	return (hash << 7) >> 7;
@@ -120,7 +120,7 @@ void map_configure(map* map, unsigned long size) {
 	if (!SIPHASH_KEY.initialized) {
 		SIPHASH_KEY.initialized = 1;
 
-		for (char i = 0; i < 4; i++) {
+		for (unsigned char i = 0; i < 4; i++) {
 			SIPHASH_KEY.key[i] = rand();
 		}
 	}

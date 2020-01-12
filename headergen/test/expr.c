@@ -1,12 +1,12 @@
-#import "vector.h"
-#import "hashtable.h"
-#import "util.h"
+#include "vector.h"
+#include "hashtable.h"
+#include "util.h"
 
-#import "numbers.h"
-#import "parser.h"
-#import "lexer.h"
+#include "numbers.h"
+#include "parser.h"
+#include "lexer.h"
 
-#import <stdlib.h>
+#include <stdlib.h>
 
 typedef enum {
 	move_left, move_right, move_inner,
@@ -156,7 +156,7 @@ int is_value(expr* exp) {
 	return is_literal(exp) || exp->kind == exp_bind;
 }
 
-int binary(expr* exp) {
+int is_binary(expr* exp) {
 	return exp->kind == exp_add || exp->kind == exp_mul || exp->kind == exp_div || exp->kind == exp_pow;
 }
 
@@ -236,7 +236,7 @@ void exp_ascend(expr_iterator* iter) {
 
 	unsigned long* last = vector_get(&iter->sub_done, iter->sub_done.length - 1);
 
-	if (binary(up)) {
+	if (is_binary(up)) {
 		if (*last == 1) {
 			vector_pop(&iter->sub_done);
 			return exp_ascend(iter);
@@ -307,7 +307,7 @@ void exp_go(expr_iterator* iter) {
 		unsigned long init = 0;
 		vector_pushcpy(&iter->sub_done, &init);
 
-		if (binary(iter->x)) {
+		if (is_binary(iter->x)) {
 			iter->cursor = descend(iter->cursor, move_left);
 		}
 
@@ -349,7 +349,7 @@ int exp_next(expr_iterator* iter) {
 expr exp_copy_value(expr* exp) {
 	expr new_exp = *exp;
 
-	if (binary(exp)) {
+	if (is_binary(exp)) {
 		new_exp.binary.left = exp_copy(exp->binary.left);
 		new_exp.binary.right = exp_copy(exp->binary.right);
 	}
@@ -554,7 +554,7 @@ int binary_next(binary_iterator* iter) {
 
 //extracts operand on other side (than x1) of operator
 expr* extract_operand(expr* exp, unsigned long x) {
-	if (!binary(exp)) return NULL;
+	if (!is_binary(exp)) return NULL;
 
 	binary_iterator iter = binary_iter(exp);
 	while (binary_next(&iter)) {
@@ -572,7 +572,7 @@ expr* extract_operand(expr* exp, unsigned long x) {
 int remove_num(expr** eref, num* num) {
 	expr* exp = *eref;
 
-	if (!binary(exp)) return 0;
+	if (!is_binary(exp)) return 0;
 
 	binary_iterator iter = binary_iter(exp);
 	while (binary_next(&iter)) {
@@ -589,7 +589,7 @@ void print_expr(expr* exp) {
 	if (exp->kind == exp_invert) {
 		printf("-");
 		print_expr(exp->inner);
-	} else if (binary(exp)) {
+	} else if (is_binary(exp)) {
 		printf("(");
 		print_expr(exp->binary.left);
 		printf(")");
@@ -669,7 +669,7 @@ void expr_free(expr* exp) {
 	if (unary(exp)) {
 		expr_free(exp->inner);
 	}
-	if (binary(exp)) {
+	if (is_binary(exp)) {
 		expr_free(exp->binary.left);
 		expr_free(exp->binary.right);
 	} else {

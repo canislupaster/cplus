@@ -1,0 +1,14 @@
+{
+    "lldb.displayFormat": "auto",
+    "lldb.dereferencePointers": true,
+    "files.associations": {
+        "random": "cpp",
+        "ratio": "cpp",
+        "iterator": "cpp",
+        "algorithm": "cpp",
+        "fstream": "cpp",
+        "functional": "cpp",
+        "ios": "cpp",
+        "*.tcc": "cpp"
+    }
+}

@@ -1,6 +1,6 @@
 // Automatically generated header.
 
-exp
+#include <stdint.h>
 typedef struct module module;
 typedef struct span {
 	module* mod;

@@ -1,4 +1,4 @@
-#import "optimizer.h"
+#include "optimizer.h"
 
 const int CALL_COST = 10;
 
@@ -8,7 +8,7 @@ int cost(expr* exp) {
 
 	if (unary(exp)) {
 		exp->cost = cost(exp->inner);
-	} else if (binary(exp)) {
+	} else if (is_binary(exp)) {
 		exp->cost = cost(exp->binary.left) + cost(exp->binary.right);
 	} else {
 		int acc = 0;
@@ -43,7 +43,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 
 	if (unary(exp)) {
 		opt_reduce(&exp->inner, opt);
-	} else if (binary(exp)) {
+	} else if (is_binary(exp)) {
 		opt_reduce(&exp->binary.left, opt);
 		opt_reduce(&exp->binary.right, opt);
 	}
@@ -88,7 +88,7 @@ static void opt_reduce(expr** eref, optimizer* opt) {
 		exp->kind = exp_num;
 		exp->by = num_new(num_invert(*exp->inner->by));
 
-	} else if (binary(exp) && exp->binary.left->kind == exp_num && exp->binary.right->kind == exp_num) {
+	} else if (is_binary(exp) && exp->binary.left->kind == exp_num && exp->binary.right->kind == exp_num) {
 		switch (exp->kind) {
 			case exp_add: set_num(exp, num_add(*exp->binary.left->by, *exp->binary.right->by));
 				break;

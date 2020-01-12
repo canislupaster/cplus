@@ -9,8 +9,8 @@ endif ()
 add_executable(headergen headergen/headergen.c ./src/hashtable.c ./src/vector.c ./src/util.c ./src/siphash.c)
 
 file(GLOB SRC headergen/test/*.[ch])
-add_library(makeheaders-test ${SRC})
-add_dependencies(makeheaders-test headergen)
+add_library(headergen-test ${SRC})
+add_dependencies(headergen-test headergen)
 
 add_custom_target(gen-headers ALL /bin/sh headergen/headergen.sh ${CMAKE_BINARY_DIR} WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_dependencies(gen-headers headergen)
