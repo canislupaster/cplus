@@ -1,4 +1,20 @@
-#include "runtime.h"
+#include "../corecommon/src/hashtable.h"
+#include "../corecommon/src/vector.h"
+#include "frontend.h"
+#include "expr.h"
+#include "numbers.h"
+
+typedef struct {
+	frontend* fe;
+	module* mod;
+
+	unsigned long stack_offset; //length of sub
+
+	map_t scope;
+	//vector of copied substitutes for lazy evaluation
+	int bind;
+	vector_t sub;
+} evaluator;
 
 expr* ev_unqualified_access(evaluator* ev, unsigned int x) {
 	expr** sub = vector_get(&ev->sub, x);
@@ -187,7 +203,7 @@ int evaluate(evaluator* ev, expr* exp, expr* out) {
 char* MAIN = "main";
 
 void evaluate_main(frontend* fe) {
-	id* main = map_find(&fe->global.ids, &MAIN);
+	id* main = map_find(&fe->current.ids, &MAIN);
 	if (!main) return;
 
 	vector_iterator iter = vector_iterate(&main->val);
@@ -198,7 +214,7 @@ void evaluate_main(frontend* fe) {
 			continue;
 		}
 
-		evaluator ev = {.mod=&fe->global, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr)), .stack_offset=0};
+		evaluator ev = {.mod=&fe->current, .fe=fe, .scope=map_new(), .sub=vector_new(sizeof(expr)), .stack_offset=0};
 		map_configure_ulong_key(&ev.scope, sizeof(expr*));
 
 		expr out;

@@ -25,7 +25,7 @@ struct module {
 	char* name;
 
 	span s;
-	vector tokens;
+	vector_t tokens;
 
 	map ids;
 };

@@ -1,4 +1,25 @@
-#include "numbers.h"
+#include "../corecommon/src/util.h"
+#include "expr.h"
+
+#include <stdint.h>
+#include <math.h>
+
+typedef struct {
+	enum {
+		num_decimal,
+		num_integer,
+	} ty;
+
+	union {
+		uint64_t uint;
+		int64_t integer;
+		long double decimal;
+	};
+} num;
+
+num* num_new(num x) {
+	return heapcpy(sizeof(num), &x);
+}
 
 void convert_dec(num* n) {
 	if (n->ty != num_decimal) {
@@ -87,7 +108,11 @@ num num_invert(num n) {
 	return res;
 }
 
-void set_num(expr* e, num n) {
-	e->kind = exp_num;
-	e->by = num_new(n);
+void print_num(num* n) {
+	switch (n->ty) {
+		case num_decimal: printf("%Lf", n->decimal);
+			break;
+		case num_integer: printf("%lli", n->integer);
+			break;
+	}
 }

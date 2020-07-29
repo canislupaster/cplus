@@ -1,7 +1,9 @@
+#pragma once
+
 #if _WIN32
 
 #ifndef WINDOWS_INC
-#include "windows.h"
+#include <windows.h>
 #endif //WINDOWS_INC
 
 enum COLORS {
@@ -23,6 +25,15 @@ enum COLORS {
 		WHITE=15
 };
 
+void set_col(FILE* f, char color) {
+	DWORD output;
+	if (f==stdout) output = STD_OUTPUT_HANDLE;
+	else if (f==stderr) output = STD_ERROR_HANDLE;
+	else return;
+
+	SetConsoleTextAttribute(GetStdHandle(output), (unsigned)color);
+}
+
 #else // WINDOWS
 
 enum TERM_COLORS {
@@ -34,5 +45,9 @@ enum TERM_COLORS {
 	GRAY,
 	WHITE = 97
 };
+
+void set_col(FILE* f, char color) {
+	fprintf(f, "\x1b[%im", (char) color);
+}
 
 #endif // WINDOWS

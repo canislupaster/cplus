@@ -12,10 +12,10 @@ typedef struct {
 
 	unsigned long length;
 	char* data;
-} vector;
+} vector_t;
 
 typedef struct {
-	vector* vec;
+	vector_t* vec;
 
 	unsigned long i;
 	char rev;
@@ -83,7 +83,7 @@ typedef enum {
 typedef struct {
 	struct value* to;
 	char static_; //whether it can be inlined / passes all conditions statically
-	vector val; //expression for every substitute indexes
+	vector_t val; //expression for every substitute indexes
 } substitution;
 
 typedef enum kind {
@@ -121,7 +121,7 @@ typedef struct expr {
 
 		struct {
 			struct id* to;
-			vector sub; // multiple dispatch, iterate until condition checks
+			vector_t sub; // multiple dispatch, iterate until condition checks
 		} call;
 	};
 } expr;
@@ -138,7 +138,7 @@ typedef struct expr_iterator {
 	expr* x;
 	exp_idx* cursor;
 
-	vector sub_done; //left, then right, (or step, base, i) then up the cursor, pop done
+	vector_t sub_done; //left, then right, (or step, base, i) then up the cursor, pop done
 	char done;
 } expr_iterator;
 
@@ -163,14 +163,14 @@ typedef struct {
 } sub_cond;
 
 typedef struct sub_group {
-	vector condition;
+	vector_t condition;
 } sub_group;
 
 /// identifier or expr (empty vec and map)
 typedef struct value {
 	span s;
-	vector groups; //conditions for substitutes in each expression
-	vector substitutes; //vector of sub_idx specifying substitutes
+	vector_t groups; //conditions for substitutes in each expression
+	vector_t substitutes; //vector of sub_idx specifying substitutes
 
 	map substitute_idx;
 
@@ -180,7 +180,7 @@ typedef struct value {
 typedef struct id {
 	span s;
 	char* name;
-	vector val; //multiple dispatch of different substitute <-> exp
+	vector_t val; //multiple dispatch of different substitute <-> exp
 	unsigned precedence;
 } id;
 
@@ -193,7 +193,7 @@ struct module {
 	char* name;
 
 	span s;
-	vector tokens;
+	vector_t tokens;
 
 	map ids;
 };
@@ -220,7 +220,7 @@ typedef struct {
 
 	module* mod;
 	map* substitute_idx;
-	vector reducers;
+	vector_t reducers;
 } parser;
 
 typedef struct {
@@ -232,5 +232,5 @@ typedef struct {
 	map scope;
 	//vector of copied substitutes for lazy evaluation
 	int bind;
-	vector sub;
+	vector_t sub;
 } evaluator;

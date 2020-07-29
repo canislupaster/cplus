@@ -1,4 +1,54 @@
-#include "lexer.h"
+#include <stdlib.h>
+#include <stdint.h>
+
+#include "numbers.h"
+
+typedef struct module module;
+
+typedef struct span {
+	module* mod;
+
+	char* start;
+	char* end;
+} span;
+
+typedef struct {
+	char* qualifier;
+	char* x;
+} name;
+
+typedef enum {
+	t_name, t_non_bind,
+	t_add, t_sub,
+	t_ellipsis, t_comma,
+	t_in, t_for,
+	t_eq, t_lparen, t_rparen,
+	t_str, t_num,
+	t_sync, t_eof
+} token_type;
+
+typedef struct {
+	token_type tt;
+	span s;
+
+	union {
+		name* name;
+		char* str;
+		num* num;
+	} val;
+} token;
+
+#include "frontend.h"
+
+typedef struct {
+	module* mod;
+	span pos;
+	char x;
+} lexer;
+
+int lex_eof(lexer* l) {
+	return l->pos.end > l->mod->s.end;
+}
 
 int lex_next(lexer* l) {
 	l->pos.end++;
@@ -12,10 +62,6 @@ int lex_next(lexer* l) {
 
 void lex_back(lexer* l) {
 	l->pos.end--;
-}
-
-int lex_eof(lexer* l) {
-	return l->pos.end > l->mod->s.end;
 }
 
 /// marks current char as start
@@ -47,14 +93,14 @@ token* token_push(lexer* l, token_type tt) {
 	return t;
 }
 
-num* num_new(num x) {
-	return heapcpy(sizeof(num), &x);
-}
-
 const char* SKIP = " \n\r/(),.+-=\"";
 name ADD_NAME = {.qualifier=NULL, .x="+"};
 name SUB_NAME = {.qualifier=NULL, .x="-"};
 name EQ_NAME = {.qualifier=NULL, .x="="};
+
+int is_name(token* x) {
+	return x->tt == t_name || x->tt == t_add || x->tt == t_sub;
+}
 
 // state is previous state, removed from reserved
 void lex_name(lexer* l, char state) {
@@ -255,7 +301,7 @@ int lex_char(lexer* l) {
 
 void lex(frontend* fe) {
 	lexer l = {.mod=&fe->current,
-			.pos={.start=fe->current->s.start, .end=fe->current->s.start}};
+			.pos={.start=fe->current.s.start, .end=fe->current.s.start}};
 
 	while (lex_char(&l));
 }

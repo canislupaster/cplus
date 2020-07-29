@@ -10,15 +10,15 @@
             "problemMatcher": []
         },
         {
-            "label": "make: headergen",
+            "label": "make: cplus interactive",
             "type": "shell",
-            "command": "make -C build headergen",
+            "command": "make -C build cplus-interactive",
             "dependsOn": "cmake"
         },
         {
-            "label": "make: cplus",
+            "label": "make: headergen",
             "type": "shell",
-            "command": "make -C build cplus",
+            "command": "make -C build headergen",
             "dependsOn": "cmake"
         }
     ]

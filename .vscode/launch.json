@@ -5,14 +5,23 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "launch: headergen",
+            "name": "launch: cplus interactive",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/headergen",
-            "args": ["expr.c", "frontend.c", "hashtable.c", "lexer.c", "numbers.c", "optimizer.c", "parser.c", "runtime.c", "siphash.c", "str.c", "term.c", "util.c", "vector.c"],
-            // "args": ["util.c"],
+            "program": "${workspaceFolder}/build/interactive",
 
-            "cwd": "${workspaceFolder}/headergen/test",
+            "cwd": "${workspaceFolder}",
+
+            "preLaunchTask": "make: cplus interactive"
+        },
+        {
+            "name": "launch: headergen on cplus",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/corecommon/headergen",
+            "args": ["./src", "./interactive"],
+
+            "cwd": "${workspaceFolder}",
 
             "preLaunchTask": "make: headergen"
         }

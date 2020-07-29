@@ -1,5 +1,28 @@
-#include "frontend.h"
+#include "../corecommon/src/vector.h"
+#include "../corecommon/src/hashtable.h"
+#include "../corecommon/src/util.h"
+#include "lexer.h"
+#include "expr.h"
 #include "colors.h"
+
+#include <stdio.h>
+
+typedef struct module {
+	char* name;
+
+	span s;
+	vector_t tokens;
+
+	map_t ids;
+} module;
+
+typedef struct {
+	module current;
+
+	char errored; //whether to continue into next stage (ex. interpreter/codegen)
+
+	map_t allocations; //ptr to trace
+} frontend;
 
 frontend* FRONTEND = NULL; //global frontend
 
@@ -53,7 +76,7 @@ void msg(frontend* fe,
 				 const char* msg) {
 	if (s->start == NULL) {
 		set_col(stdout, color1);
-		printf(template_empty, fe->name);
+		printf(template_empty, fe->current.name);
 
 		set_col(stdout, color2);
 		printf("%s\n\n", msg);
@@ -67,7 +90,7 @@ void msg(frontend* fe,
 
 	span line_span = *s;
 	//count cols backwards
-	while (*line_span.start != '\n' && line_span.start >= fe->s.start) {
+	while (*line_span.start != '\n' && line_span.start >= fe->current.s.start) {
 		col++; //add column for every time we decrement to find previous linebreak
 		line_span.start--;
 	}
@@ -75,26 +98,26 @@ void msg(frontend* fe,
 	line_span.start++;
 
 	//...then count up for lines
-	for (char* pos = line_span.start; pos > fe->s.start; pos--) {
+	for (char* pos = line_span.start; pos > fe->current.s.start; pos--) {
 		if (*pos == '\n')
 			line++;
 	}
 
 	//resolve end of lines to show, upper bound exclusive
-	while (line_span.end < fe->s.end && *line_span.end != '\n') {
+	while (line_span.end < fe->current.s.end && *line_span.end != '\n') {
 		line_span.end++;
 	}
 
 	//store spans of each line
-	vector lines = vector_new(sizeof(span));
+	vector_t lines = vector_new(sizeof(span));
 
 	char* line_start = line_span.start;
 	char* pos = line_span.start;
 	while (pos++, pos <= line_span.end) {
 		if (pos == line_span.end || *pos == '\n') {
 			//+1 to skip newline
-			span* x = vector_pushcpy(&lines,
-															 &(span) {.start=line_start, .end=pos});
+			span* x = vector_pushcpy(&lines, 
+				&(span) {.start=line_start, .end=pos});
 
 			line_start = pos + 1; //skip newline
 		}
@@ -106,7 +129,7 @@ void msg(frontend* fe,
 	int digits = (int) log10(line + lines.length) + 1;
 
 	set_col(stdout, color1);
-	printf(template, fe->name, line, col);
+	printf(template, fe->current.name, line, col);
 
 	set_col(stdout, color2);
 	printf("%s\n\n", msg);
@@ -173,19 +196,6 @@ void note(const span* s, const char* x) {
 	msg(FRONTEND, s, GRAY, WHITE, "note: in %s", "note: at %s:%lu:%lu, ", x);
 }
 
-void print_num(num* n) {
-	switch (n->ty) {
-		case num_decimal: printf("%Lf", n->decimal);
-			break;
-		case num_integer: printf("%lli", n->integer);
-			break;
-	}
-}
-
-int is_name(token* x) {
-	return x->tt == t_name || x->tt == t_add || x->tt == t_sub;
-}
-
 ///initialize frontend with file
 int read_file(module* mod, char* filename) {
 	FILE* f = fopen(filename, "rb");
@@ -216,8 +226,7 @@ void module_init(module* b) {
 }
 
 frontend make_frontend() {
-	frontend fe = {.allocations=map_new()};
-	map_configure_ptr_key(&fe.allocations, sizeof(trace));
+	frontend fe = {.errored=0, .current=NULL};
 
 	FRONTEND = &fe;
 
@@ -234,7 +243,7 @@ void value_free(value* val) {
 
 	vector_iterator group_iter = vector_iterate(&val->groups);
 	while (vector_next(&group_iter)) {
-		vector* condition = &((sub_group*) group_iter.x)->condition;
+		vector_t* condition = &((sub_group*) group_iter.x)->condition;
 		vector_iterator cond_iter = vector_iterate(condition);
 		while (vector_next(&cond_iter)) {
 			sub_cond* cond = cond_iter.x;

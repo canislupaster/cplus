@@ -1,6 +1,7 @@
 #include <stdio.h>
 
-#include "interactive.h"
+#include "../src/frontend.h"
+#include "../src/runtime.h"
 #include "../src/colors.h"
 
 int main(int argc, char** argv) {

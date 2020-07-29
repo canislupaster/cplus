@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#include "util.h"
+#include "../corecommon/src/util.h"
 #include "str.h"
 
 // by Pavel Šimerda

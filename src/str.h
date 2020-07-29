@@ -1,4 +1,10 @@
-/* This file was automatically generated.  Do not edit! */
-#undef INTERFACE
-void *heap(size_t size);
-int vasprintf(char **strp,const char *fmt,va_list ap);
+// Automatically generated header.
+
+#pragma once
+#include <stdlib.h>
+
+#include <stdio.h>
+
+#include <stdarg.h>
+
+int vasprintf(char** strp, const char* fmt, va_list ap);

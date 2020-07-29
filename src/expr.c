@@ -1,4 +1,122 @@
-#include "expr.h"
+#include "../corecommon/src/vector.h"
+#include "../corecommon/src/hashtable.h"
+#include "../corecommon/src/util.h"
+
+#include "numbers.h"
+#include "lexer.h"
+
+#include <stdlib.h>
+
+typedef enum {
+	move_left, move_right, move_inner,
+	move_for_i, move_for_base, move_for_step,
+	move_call_i
+} move_kind;
+
+/// substituted in reverse
+typedef struct {
+	struct value* to;
+	char static_; //whether it can be inlined / passes all conditions statically
+	vector_t val; //expression for every substitute indexes
+} substitution;
+
+typedef enum kind {
+	exp_bind, exp_num,
+	exp_add, exp_invert, exp_mul, exp_div, exp_pow, //1-2 args
+	//a conditional is a for expressed without the base, def is a for if i=1
+	exp_cond, exp_def, exp_for, exp_call //2-3 args
+} kind;
+
+/// everything has one to three arguments and can be chained
+typedef struct expr {
+	span s;
+	int cost; //memoized cost
+
+	kind kind;
+
+	union {
+		num* by;
+		unsigned long bind;
+		struct expr* inner;
+
+		struct {
+			struct expr* base; //if zero
+			struct expr* step;
+
+			char named;
+			unsigned long x;
+			struct expr* i;
+		} _for;
+
+		struct {
+			struct expr* left;
+			struct expr* right;
+		} binary;
+
+		struct {
+			struct id* to;
+			vector_t sub; // multiple dispatch, iterate until condition checks
+		} call;
+	};
+} expr;
+
+typedef struct exp_idx {
+	struct exp_idx* from;
+	move_kind kind;
+	unsigned long i; //index of value
+	unsigned long i2; //index of substitute
+} exp_idx;
+
+typedef struct expr_iterator {
+	expr* root;
+	expr* x;
+	exp_idx* cursor;
+
+	vector_t sub_done; //left, then right, (or step, base, i) then up the cursor, pop done
+	char done;
+} expr_iterator;
+
+typedef struct {
+	expr* exp;
+	expr* x;
+	expr* other;
+
+	char right;
+} binary_iterator;
+
+typedef struct sub_idx {
+	unsigned int i;
+	exp_idx* idx;
+} sub_idx;
+
+typedef struct {
+	exp_idx* idx;
+
+	expr* exp; //make sure it is equivalent to an expression at leaf-binding
+	kind kind; //otherwise check kind and descend through substitute indexes
+} sub_cond;
+
+typedef struct sub_group {
+	vector_t condition;
+} sub_group;
+
+/// identifier or expr (empty vec and map)
+typedef struct value {
+	span s;
+	vector_t groups; //conditions for substitutes in each expression
+	vector_t substitutes; //vector_t of sub_idx specifying substitutes
+
+	map_t substitute_idx;
+
+	struct expr* exp;
+} value;
+
+typedef struct id {
+	span s;
+	char* name;
+	vector_t val; //multiple dispatch of different substitute <-> exp
+	unsigned precedence;
+} id;
 
 expr* expr_new() {
 	expr* x = heap(sizeof(expr));
@@ -7,13 +125,6 @@ expr* expr_new() {
 
 	x->s.start = NULL;
 	x->s.end = NULL;
-	return x;
-}
-
-expr* expr_new_p(parser* p, expr* first) {
-	expr* x = expr_new();
-	x->s.start = first ? first->s.start : p->current.s.start;
-
 	return x;
 }
 
@@ -44,7 +155,7 @@ int is_value(expr* exp) {
 	return is_literal(exp) || exp->kind == exp_bind;
 }
 
-int binary(expr* exp) {
+int is_binary(expr* exp) {
 	return exp->kind == exp_add || exp->kind == exp_mul || exp->kind == exp_div || exp->kind == exp_pow;
 }
 
@@ -124,7 +235,7 @@ void exp_ascend(expr_iterator* iter) {
 
 	unsigned long* last = vector_get(&iter->sub_done, iter->sub_done.length - 1);
 
-	if (binary(up)) {
+	if (is_binary(up)) {
 		if (*last == 1) {
 			vector_pop(&iter->sub_done);
 			return exp_ascend(iter);
@@ -195,7 +306,7 @@ void exp_go(expr_iterator* iter) {
 		unsigned long init = 0;
 		vector_pushcpy(&iter->sub_done, &init);
 
-		if (binary(iter->x)) {
+		if (is_binary(iter->x)) {
 			iter->cursor = descend(iter->cursor, move_left);
 		}
 
@@ -233,11 +344,13 @@ int exp_next(expr_iterator* iter) {
 	return 1;
 }
 
+expr* exp_copy(expr* exp);
+
 //copies expression by value
 expr exp_copy_value(expr* exp) {
 	expr new_exp = *exp;
 
-	if (binary(exp)) {
+	if (is_binary(exp)) {
 		new_exp.binary.left = exp_copy(exp->binary.left);
 		new_exp.binary.right = exp_copy(exp->binary.right);
 	}
@@ -296,7 +409,7 @@ void exp_rename(expr* exp, unsigned threshold, unsigned offset) {
 
 void gen_condition(value* val, expr* bind_exp, unsigned int i) {
 	sub_group* group = vector_setcpy(&val->groups, i,
-																	 &(sub_group) {.condition=vector_new(sizeof(sub_cond))});
+		&(sub_group) {.condition=vector_new(sizeof(sub_cond))});
 
 	expr_iterator iter = exp_iter(bind_exp);
 	while (!iter.done) {
@@ -442,7 +555,7 @@ int binary_next(binary_iterator* iter) {
 
 //extracts operand on other side (than x1) of operator
 expr* extract_operand(expr* exp, unsigned long x) {
-	if (!binary(exp)) return NULL;
+	if (!is_binary(exp)) return NULL;
 
 	binary_iterator iter = binary_iter(exp);
 	while (binary_next(&iter)) {
@@ -460,7 +573,7 @@ expr* extract_operand(expr* exp, unsigned long x) {
 int remove_num(expr** eref, num* num) {
 	expr* exp = *eref;
 
-	if (!binary(exp)) return 0;
+	if (!is_binary(exp)) return 0;
 
 	binary_iterator iter = binary_iter(exp);
 	while (binary_next(&iter)) {
@@ -473,11 +586,17 @@ int remove_num(expr** eref, num* num) {
 	return 0;
 }
 
+//set expr to be a num of n
+void set_num(expr* e, num n) {
+	e->kind = exp_num;
+	e->by = num_new(n);
+}
+
 void print_expr(expr* exp) {
 	if (exp->kind == exp_invert) {
 		printf("-");
 		print_expr(exp->inner);
-	} else if (binary(exp)) {
+	} else if (is_binary(exp)) {
 		printf("(");
 		print_expr(exp->binary.left);
 		printf(")");
@@ -557,7 +676,7 @@ void expr_free(expr* exp) {
 	if (unary(exp)) {
 		expr_free(exp->inner);
 	}
-	if (binary(exp)) {
+	if (is_binary(exp)) {
 		expr_free(exp->binary.left);
 		expr_free(exp->binary.right);
 	} else {
